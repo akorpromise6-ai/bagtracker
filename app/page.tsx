@@ -51,7 +51,7 @@ export default function BagTrackerApp() {
       
       // Initialize the official Bags SDK with your API key
       // (Using a placeholder here so the demo doesn't crash on Vercel)
-      const sdk = new BagsSDK('bags_prod_jXQ8QT9yoZ0t5nk1wat44nw6I4HDZNbv9ZgcRJ2Z0rI', connection, 'processed');
+      const sdk = new BagsSDK('process.env.BAGS_API_KEY', connection, 'processed');
       
       // In a full production app, you would fetch real token data here:
       // const tokenMint = new PublicKey("...");
