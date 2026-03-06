@@ -11,7 +11,9 @@
   "dependencies": {
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "@bagsfm/bags-sdk": "^1.2.8",
+    "@solana/web3.js": "latest"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
