@@ -1,236 +1,425 @@
 "use client";
+import { useState, useEffect, useCallback } from "react";
 
-import React, { useState } from 'react';
-// 1. The new official Bags SDK imports you just installed!
-import { BagsSDK } from '@bagsfm/bags-sdk';
-import { Connection, PublicKey } from '@solana/web3.js';
+// ── Solana RPC (real on-chain data) ───────────────────────────────────────────
+const RPC = "https://api.mainnet-beta.solana.com";
 
-export default function BagTrackerApp() {
-  const [walletAddress, setWalletAddress] = useState("");
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [activeTab, setActiveTab] = useState("dashboard"); 
-  const [showFlexCard, setShowFlexCard] = useState(false); 
-  const [isFetchingBags, setIsFetchingBags] = useState(false);
+async function getSolBalance(pubkey: string): Promise<number> {
+  try {
+    const res = await fetch(RPC, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBalance", params: [pubkey] }),
+    });
+    const data = await res.json();
+    return (data.result?.value || 0) / 1e9;
+  } catch { return 0; }
+}
 
-  // Wallet Connection Logic
-  const connectWallet = async () => {
-    if (typeof window !== "undefined" && typeof (window as any).ethereum !== "undefined") {
-      try {
-        setIsConnecting(true);
-        const accounts = await (window as any).ethereum.request({ method: "eth_requestAccounts" });
-        if (accounts.length > 0) {
-          setWalletAddress(accounts[0]);
-        }
-      } catch (error) {
-        console.error("User denied connection", error);
-      } finally {
-        setIsConnecting(false);
-      }
-    } else {
-      alert("No Web3 wallet detected! Use the MetaMask or Coinbase Wallet in-app browser to connect.");
-    }
+async function getTokenAccounts(pubkey: string): Promise<any[]> {
+  try {
+    const res = await fetch(RPC, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1,
+        method: "getTokenAccountsByOwner",
+        params: [pubkey, { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }, { encoding: "jsonParsed" }],
+      }),
+    });
+    const data = await res.json();
+    return data.result?.value || [];
+  } catch { return []; }
+}
+
+// ── Fetch from our secure API route ──────────────────────────────────────────
+async function fetchBagsAPI(endpoint: string, wallet: string) {
+  try {
+    const res = await fetch(`/api/bags?endpoint=${endpoint}&wallet=${wallet}`);
+    return await res.json();
+  } catch { return null; }
+}
+
+// ── Utils ─────────────────────────────────────────────────────────────────────
+const fmt = (n: number, d = 2) =>
+  Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+const short = (a: string) => a ? `${a.slice(0, 4)}…${a.slice(-4)}` : "";
+
+// Deterministic fun degen stats from wallet (no external call needed)
+function degenStats(pubkey: string, sol: number, tokens: number) {
+  const rng = (seed: string, min: number, max: number) => {
+    let h = 0;
+    for (let i = 0; i < seed.length; i++) h = (Math.imul(31, h) + seed.charCodeAt(i)) | 0;
+    return min + (Math.abs(h % 1000) / 1000) * (max - min);
   };
-
-  const formatAddress = (address: string) => {
-    return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
+  const ri = (s: string, a: number, b: number) => Math.floor(rng(s, a, b));
+  const score = Math.min(100, Math.floor(rng(pubkey + "d", 20, 90) + Math.min(sol * 2, 18) + Math.min(tokens, 12)));
+  return {
+    score,
+    rugs: ri(pubkey + "r", 0, 22),
+    diamond: ri(pubkey + "dm", 10, 100),
+    calls: ri(pubkey + "c", 2, 55),
+    hitRate: ri(pubkey + "h", 8, 70),
+    pnl: rng(pubkey + "p", -70, 380),
+    title: score >= 90 ? "DEGEN GOD 🌑" : score >= 75 ? "DIAMOND HANDS 💎" : score >= 55 ? "SEASONED APE 🦍" : score >= 35 ? "RUG SURVIVOR 🧟" : "PAPER HANDS 📄",
+    theme: score >= 90 ? "god" : score >= 75 ? "diamond" : score >= 55 ? "ape" : "survivor",
   };
+}
 
-  // --- THE NEW API FUNCTION ---
-  const fetchBagsData = async () => {
-    // Require wallet connection first
-    if(!walletAddress) {
-      alert("Please connect your wallet first!");
+const THEMES: Record<string, any> = {
+  god:      { bg: "linear-gradient(135deg,#0d0015,#1a0030,#0a001a)", acc: "#c084fc", glow: "rgba(192,132,252,0.4)", badge: "#7c3aed" },
+  diamond:  { bg: "linear-gradient(135deg,#001220,#002040,#001530)", acc: "#67e8f9", glow: "rgba(103,232,249,0.35)", badge: "#0891b2" },
+  ape:      { bg: "linear-gradient(135deg,#0f1a00,#1a2d00,#0a1200)", acc: "#86efac", glow: "rgba(134,239,172,0.3)", badge: "#15803d" },
+  survivor: { bg: "linear-gradient(135deg,#1a0a00,#2d1500,#120800)", acc: "#fb923c", glow: "rgba(251,146,60,0.3)", badge: "#c2410c" },
+};
+
+// ── MAIN ──────────────────────────────────────────────────────────────────────
+export default function Home() {
+  const [wallet, setWallet] = useState<{ publicKey: string } | null>(null);
+  const [sol, setSol] = useState(0);
+  const [tokens, setTokens] = useState<any[]>([]);
+  const [connecting, setConnecting] = useState(false);
+  const [tab, setTab] = useState("dashboard");
+  const [degen, setDegen] = useState<any>(null);
+  const [cardTheme, setCardTheme] = useState("god");
+  const [copied, setCopied] = useState(false);
+  const [bagsTokens, setBagsTokens] = useState<any[]>([]);
+  const [bagsFees, setBagsFees] = useState<any>(null);
+  const [bagsLoading, setBagsLoading] = useState(false);
+  const SOL_PRICE = 178;
+
+  const connect = useCallback(async () => {
+    const phantom = (window as any).solana || (window as any).phantom?.solana;
+    if (!phantom?.isPhantom) {
+      alert("👻 Install Phantom from phantom.app to connect!");
       return;
     }
-
+    setConnecting(true);
     try {
-      setIsFetchingBags(true);
-      
-      // Initialize the Solana connection
-      const connection = new Connection('https://api.mainnet-beta.solana.com');
-      
-      // Initialize the official Bags SDK with your API key
-      // (Using a placeholder here so the demo doesn't crash on Vercel)
-      const sdk = new BagsSDK('process.env.BAGS_API_KEY', connection, 'processed');
-      
-      // In a full production app, you would fetch real token data here:
-      // const tokenMint = new PublicKey("...");
-      // const creators = await sdk.state.getTokenCreators(tokenMint);
-      
-      // For the hackathon demo, we simulate the API network delay
-      setTimeout(() => {
-        setIsFetchingBags(false);
-        setShowFlexCard(true); // Show the card after "fetching" data
-      }, 1500);
-      
-    } catch (error) {
-      console.error("API Error:", error);
-      setIsFetchingBags(false);
+      const resp = await phantom.connect();
+      const pk = resp.publicKey.toString();
+      setWallet({ publicKey: pk });
+
+      const [balance, tkns] = await Promise.all([getSolBalance(pk), getTokenAccounts(pk)]);
+      setSol(balance);
+      setTokens(tkns);
+      setDegen(degenStats(pk, balance, tkns.length));
+
+      // Fetch real Bags.fm data
+      setBagsLoading(true);
+      const [creators, fees] = await Promise.all([
+        fetchBagsAPI("creators", pk),
+        fetchBagsAPI("fees", pk),
+      ]);
+      if (creators?.success) setBagsTokens(creators.response?.tokens || []);
+      if (fees?.success) setBagsFees(fees.response);
+      setBagsLoading(false);
+
+    } catch (err: any) {
+      if (err.code !== 4001) alert("Connection failed: " + (err.message || "Unknown error"));
+    } finally {
+      setConnecting(false);
     }
+  }, []);
+
+  const disconnect = () => {
+    setWallet(null); setSol(0); setTokens([]); setDegen(null);
+    setBagsTokens([]); setBagsFees(null);
   };
 
-  // Mock data for the Ecosystem Leaderboard
-  const mockLeaderboard = [
-    { rank: 1, name: "vitalik.bags", score: "98,450", trend: "+12%" },
-    { rank: 2, name: "cryptopunk.bags", score: "85,200", trend: "+5%" },
-    { rank: 3, name: "degen_king", score: "74,100", trend: "+22%" },
-  ];
+  useEffect(() => {
+    const p = (window as any).solana;
+    if (!p) return;
+    p.on?.("disconnect", disconnect);
+    return () => p.off?.("disconnect", disconnect);
+  }, []);
+
+  const totalUsd = sol * SOL_PRICE;
+
+  const copyCard = () => {
+    if (!degen || !wallet) return;
+    const text = `🎒 My BagTracker Degen Card\n${degen.title}\n\n◎ SOL: ${fmt(sol, 3)}\n⚡ Degen Score: ${degen.score}/100\n🧟 Rugs Survived: ${degen.rugs}\n📣 Calls: ${degen.calls} (${degen.hitRate}% hit)\n\nbagtracker.vercel.app`;
+    navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2500); });
+  };
+
+  const tweet = () => {
+    if (!degen) return;
+    const t = `🎒 My Degen Card on BagTracker\n${degen.title}\n◎ ${fmt(sol,3)} SOL · ⚡ ${degen.score}/100 · 🧟 ${degen.rugs} rugs survived\n\nbagtracker.vercel.app @bagsfm`;
+    window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(t)}`, "_blank");
+  };
+
+  const theme = THEMES[cardTheme];
 
   return (
-    <main className="min-h-screen bg-[#F9F9F6] text-black pb-12 font-sans">
-      
-      {/* Top Navigation Bar */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-[#00D12E] rounded-full flex items-center justify-center text-white font-bold text-sm rounded-b-xl border-t-2 border-white shadow-sm">
-              $
-            </div>
-            <h1 className="text-xl font-bold tracking-tight">BagTracker</h1>
+    <div style={{ minHeight: "100vh", background: "#070810", color: "#e2e8f0", fontFamily: "'DM Sans', sans-serif" }}>
+      {/* BG */}
+      <div style={{ position: "fixed", inset: 0, background: "radial-gradient(ellipse 100% 60% at 50% 0%,rgba(124,58,237,0.07) 0%,transparent 65%)", pointerEvents: "none" }} />
+
+      {/* Header */}
+      <header style={{ position: "sticky", top: 0, zIndex: 100, background: "rgba(7,8,16,0.9)", backdropFilter: "blur(16px)", borderBottom: "1px solid rgba(124,58,237,0.15)", padding: "0 20px" }}>
+        <div style={{ maxWidth: 900, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
+              <rect x="9" y="14" width="14" height="12" rx="3" fill="#9f7aea"/>
+              <path d="M12 14v-2a4 4 0 018 0v2" stroke="#9f7aea" strokeWidth="2" strokeLinecap="round" fill="none"/>
+              <circle cx="16" cy="20" r="2" fill="#070810"/>
+            </svg>
+            <span style={{ fontWeight: 800, fontSize: 18 }}>Bag<span style={{ color: "#9f7aea" }}>Tracker</span></span>
+            <span style={{ fontSize: 10, background: "rgba(124,58,237,0.2)", color: "#a78bfa", padding: "2px 8px", borderRadius: 10, letterSpacing: 1 }}>SOLANA</span>
           </div>
-          <button 
-            onClick={connectWallet}
-            disabled={isConnecting}
-            className="bg-black text-white px-5 py-2 rounded-full text-sm font-bold hover:bg-gray-800 transition"
-          >
-            {isConnecting ? "Connecting..." : walletAddress ? formatAddress(walletAddress) : "Connect Wallet"}
-          </button>
+
+          {wallet ? (
+            <div style={{ display: "flex", gap: 8 }}>
+              <span style={{ padding: "5px 12px", background: "rgba(124,58,237,0.15)", border: "1px solid rgba(124,58,237,0.3)", borderRadius: 20, fontSize: 12, color: "#a78bfa" }}>● Mainnet</span>
+              <button onClick={disconnect} style={{ padding: "5px 14px", background: "transparent", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 20, color: "#9ca3af", fontSize: 12, cursor: "pointer" }}>
+                {short(wallet.publicKey)} ✕
+              </button>
+            </div>
+          ) : (
+            <button onClick={connect} disabled={connecting} style={{ padding: "8px 20px", background: "linear-gradient(135deg,#7c3aed,#9f7aea)", color: "#fff", border: "none", borderRadius: 20, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+              {connecting ? "Connecting…" : "👻 Connect Phantom"}
+            </button>
+          )}
         </div>
       </header>
 
-      {/* Tab Navigation System */}
-      <div className="max-w-4xl mx-auto px-6 mt-8 mb-6 flex gap-3 overflow-x-auto hide-scrollbar">
-        <button 
-          onClick={() => setActiveTab("dashboard")}
-          className={`px-5 py-2.5 rounded-full text-sm font-bold transition whitespace-nowrap ${activeTab === "dashboard" ? "bg-black text-white shadow-md" : "bg-gray-200 text-gray-600 hover:bg-gray-300"}`}
-        >
-          My Dashboard
-        </button>
-        <button 
-          onClick={() => setActiveTab("leaderboard")}
-          className={`px-5 py-2.5 rounded-full text-sm font-bold transition whitespace-nowrap ${activeTab === "leaderboard" ? "bg-black text-white shadow-md" : "bg-gray-200 text-gray-600 hover:bg-gray-300"}`}
-        >
-          Global Leaderboard
-        </button>
-      </div>
+      <main style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px 80px" }}>
 
-      {/* Main Content Area */}
-      <div className="max-w-4xl mx-auto px-6">
-        
-        {/* --- TAB 1: DASHBOARD --- */}
-        {activeTab === "dashboard" && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
-            {/* Onchain Portfolio */}
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-              <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Total Onchain Value</h2>
-              <p className="text-4xl font-extrabold mb-4">{walletAddress ? "$12,450.00" : "$0.00"}</p>
-              <div className="flex items-center gap-2 text-[#00D12E] font-medium text-sm bg-green-50 w-max px-3 py-1 rounded-full">
-                <span>{walletAddress ? "↑ +5.2%" : "---"}</span>
-                <span className="text-gray-500">this week</span>
-              </div>
-            </div>
-
-            {/* Social Influence */}
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-              <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Bags.fm Social Capital</h2>
-              <div className="flex justify-between items-end">
-                <div>
-                  <p className="text-4xl font-extrabold mb-1">{walletAddress ? "4,205" : "0"}</p>
-                  <p className="text-sm text-gray-500 font-medium">Followers</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-2xl font-bold mb-1">{walletAddress ? "1.2k" : "0"}</p>
-                  <p className="text-sm text-gray-500 font-medium">Engagement</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Flex Card Generator Area */}
-            <div className="col-span-1 md:col-span-2 mt-4">
-              {!showFlexCard ? (
-                <div className="bg-black text-white p-8 rounded-2xl flex flex-col items-center text-center shadow-lg">
-                  <h2 className="text-2xl font-bold mb-3">Ready to flex your growth?</h2>
-                  <p className="text-gray-400 mb-6 max-w-md text-sm">Fetch your real social metrics from the Bags API to generate a verified, shareable graphic.</p>
-                  <button 
-                    onClick={fetchBagsData}
-                    disabled={isFetchingBags}
-                    className="bg-[#00D12E] text-black px-8 py-3 rounded-full font-bold hover:bg-green-400 transition w-full md:w-auto disabled:opacity-50"
-                  >
-                    {isFetchingBags ? "Fetching API Data..." : "Generate Flex Card"}
-                  </button>
-                </div>
-              ) : (
-                <div className="bg-white border border-gray-200 p-6 rounded-2xl flex flex-col items-center text-center shadow-sm">
-                  <h2 className="text-lg font-bold mb-4">Your Verified Flex Card</h2>
-                  
-                  {/* The visual "Card" Design */}
-                  <div className="bg-gradient-to-br from-gray-900 to-black p-6 rounded-xl w-full max-w-sm text-left shadow-2xl relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-[#00D12E] opacity-20 rounded-full blur-2xl -mr-10 -mt-10"></div>
-                    <p className="text-[#00D12E] font-bold text-xs mb-1 tracking-widest">BAGTRACKER.FM</p>
-                    <h3 className="text-white text-2xl font-extrabold mb-6">Weekly Boost 🚀</h3>
-                    
-                    <div className="flex justify-between items-end border-b border-gray-700 pb-4 mb-4">
-                      <div>
-                        <p className="text-gray-400 text-xs uppercase mb-1">Net Worth</p>
-                        <p className="text-white font-bold text-xl">$12,450.00</p>
-                      </div>
-                      <p className="text-[#00D12E] font-bold text-lg">+5.2%</p>
-                    </div>
-                    
-                    <div className="flex justify-between items-end">
-                      <div>
-                        <p className="text-gray-400 text-xs uppercase mb-1">Social Growth</p>
-                        <p className="text-white font-bold text-xl">4,205 Followers</p>
-                      </div>
-                      <p className="text-[#00D12E] font-bold text-lg">+1.2k Eng</p>
-                    </div>
-                  </div>
-                  
-                  {/* Card Actions */}
-                  <div className="flex gap-4 mt-6 w-full max-w-sm">
-                     <button className="flex-1 bg-gray-100 text-gray-800 py-3 rounded-full font-bold text-sm hover:bg-gray-200" onClick={() => setShowFlexCard(false)}>Close</button>
-                     <button className="flex-1 bg-[#00D12E] text-black py-3 rounded-full font-bold text-sm hover:bg-green-400" onClick={() => alert("Image download initiated! (Hackathon Demo)")}>Download Image</button>
-                  </div>
-                </div>
-              )}
-            </div>
+        {/* Not connected */}
+        {!wallet && (
+          <div style={{ textAlign: "center", padding: "80px 20px" }}>
+            <div style={{ fontSize: 64 }}>🎒</div>
+            <h1 style={{ fontSize: 44, fontWeight: 900, margin: "16px 0 12px", letterSpacing: "-2px" }}>
+              Track Your<br />
+              <span style={{ background: "linear-gradient(90deg,#9f7aea,#c084fc)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Bags.</span>
+            </h1>
+            <p style={{ color: "#6b7280", maxWidth: 340, margin: "0 auto 32px", lineHeight: 1.7 }}>
+              Connect Phantom to see your real SOL balance, Bags.fm token data, claimable fees, and generate your Degen Card.
+            </p>
+            <button onClick={connect} disabled={connecting} style={{ padding: "14px 40px", background: "linear-gradient(135deg,#7c3aed,#9f7aea)", color: "#fff", border: "none", borderRadius: 50, fontWeight: 800, fontSize: 16, cursor: "pointer", boxShadow: "0 0 50px rgba(124,58,237,0.4)" }}>
+              {connecting ? "Connecting…" : "👻 Connect Phantom"}
+            </button>
           </div>
         )}
 
-        {/* --- TAB 2: LEADERBOARD --- */}
-        {activeTab === "leaderboard" && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden animate-fade-in">
-            <div className="bg-gray-50 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="font-bold text-gray-800">Global Ecosystem Ranking</h2>
-              <span className="text-xs font-bold bg-black text-[#00D12E] px-3 py-1 rounded-full">Top 500</span>
-            </div>
-            
-            <div className="divide-y divide-gray-100">
-              {mockLeaderboard.map((user, index) => (
-                <div key={index} className="px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition">
-                  <div className="flex items-center gap-4">
-                    <span className={`font-bold w-6 text-center ${index === 0 ? 'text-yellow-500 text-lg' : index === 1 ? 'text-gray-400 text-lg' : index === 2 ? 'text-orange-400 text-lg' : 'text-gray-300'}`}>
-                      #{user.rank}
-                    </span>
-                    <div className="w-10 h-10 bg-gradient-to-tr from-[#00D12E] to-emerald-800 rounded-full border-2 border-white shadow-sm flex items-center justify-center text-white text-xs font-bold">
-                      {user.name.charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                      <p className="font-bold text-gray-900">{user.name}</p>
-                      <p className="text-xs text-gray-500 font-medium mt-0.5">Bag Score: {user.score}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className={`font-bold text-sm ${user.trend.startsWith('+') ? 'text-[#00D12E]' : 'text-red-500'}`}>{user.trend}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">7d change</p>
-                  </div>
+        {/* Dashboard */}
+        {wallet && degen && (
+          <>
+            {/* KPI Strip */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 12, marginBottom: 20 }}>
+              {[
+                { label: "SOL Balance", val: `◎ ${fmt(sol, 3)}`, col: "#9f7aea" },
+                { label: "USD Value", val: `$${fmt(totalUsd)}`, col: "#67e8f9" },
+                { label: "Degen Score", val: `${degen.score}/100`, col: "#fb923c" },
+                { label: "Token Accounts", val: `${tokens.length}`, col: "#facc15" },
+              ].map(k => (
+                <div key={k.label} style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: "16px" }}>
+                  <div style={{ fontSize: 10, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>{k.label}</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: k.col }}>{k.val}</div>
                 </div>
               ))}
             </div>
-          </div>
+
+            {/* Tabs */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 20, overflowX: "auto" }}>
+              {[
+                { id: "dashboard", label: "◎ Portfolio" },
+                { id: "bags", label: "🎒 Bags.fm Data" },
+                { id: "degen", label: "🎴 Degen Card" },
+              ].map(t => (
+                <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "8px 18px", background: tab === t.id ? "linear-gradient(135deg,#7c3aed,#9f7aea)" : "rgba(255,255,255,0.04)", color: tab === t.id ? "#fff" : "#9ca3af", border: "1px solid " + (tab === t.id ? "#7c3aed" : "rgba(255,255,255,0.07)"), borderRadius: 50, fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Portfolio Tab */}
+            {tab === "dashboard" && (
+              <div style={{ display: "grid", gap: 14 }}>
+                <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 20, padding: "26px" }}>
+                  <div style={{ fontSize: 13, color: "#6b7280" }}>Total Portfolio</div>
+                  <div style={{ fontSize: 40, fontWeight: 900, color: "#9f7aea", margin: "6px 0" }}>${fmt(totalUsd)}</div>
+                  <div style={{ fontSize: 13, color: degen.pnl >= 0 ? "#4ade80" : "#f87171" }}>
+                    {degen.pnl >= 0 ? "▲" : "▼"} {Math.abs(degen.pnl).toFixed(1)}% all-time
+                  </div>
+                  <div style={{ marginTop: 20, padding: "14px", background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.2)", borderRadius: 14, display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#a78bfa" }}>🎒 SPL Token Accounts</span>
+                    <span style={{ fontWeight: 800, color: "#c084fc" }}>{tokens.length}</span>
+                  </div>
+                </div>
+                <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 20, padding: "24px" }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 14 }}>⚡ Degen Snapshot</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+                    {[
+                      { e: "🧟", v: degen.rugs, l: "Rugs Survived" },
+                      { e: "💎", v: `${degen.diamond}%`, l: "Diamond Hands" },
+                      { e: "📣", v: degen.calls, l: "Calls Made" },
+                      { e: "🎯", v: `${degen.hitRate}%`, l: "Hit Rate" },
+                      { e: "⚡", v: degen.score, l: "Degen Score" },
+                      { e: "🎒", v: tokens.length, l: "Bags Held" },
+                    ].map(s => (
+                      <div key={s.l} style={{ textAlign: "center", padding: "12px 8px", background: "rgba(255,255,255,0.02)", borderRadius: 12 }}>
+                        <div style={{ fontSize: 18 }}>{s.e}</div>
+                        <div style={{ fontSize: 17, fontWeight: 800, margin: "3px 0" }}>{s.v}</div>
+                        <div style={{ fontSize: 9, color: "#6b7280", textTransform: "uppercase" }}>{s.l}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Bags.fm Live Data Tab */}
+            {tab === "bags" && (
+              <div style={{ display: "grid", gap: 14 }}>
+                {bagsLoading ? (
+                  <div style={{ textAlign: "center", padding: "60px", color: "#6b7280" }}>
+                    <div style={{ fontSize: 32, marginBottom: 12 }}>🎒</div>
+                    Fetching live Bags.fm data…
+                  </div>
+                ) : (
+                  <>
+                    {/* Claimable Fees */}
+                    <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 20, padding: "24px" }}>
+                      <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 16 }}>💰 Claimable Fees (Live)</div>
+                      {bagsFees && bagsFees.length > 0 ? (
+                        <div style={{ display: "grid", gap: 10 }}>
+                          {bagsFees.slice(0, 5).map((fee: any, i: number) => (
+                            <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "12px 16px", background: "rgba(255,255,255,0.02)", borderRadius: 12 }}>
+                              <span style={{ fontSize: 13, color: "#9ca3af" }}>{fee.mint ? `${fee.mint.slice(0,8)}…` : `Position ${i+1}`}</span>
+                              <span style={{ fontWeight: 700, color: "#4ade80" }}>◎ {fmt(fee.claimableFees || 0, 4)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ padding: "20px", textAlign: "center", color: "#6b7280", fontSize: 14 }}>
+                          No claimable fees found for this wallet yet.<br />
+                          <span style={{ fontSize: 12 }}>Create tokens on Bags.fm to earn fees!</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Tokens Created */}
+                    <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 20, padding: "24px" }}>
+                      <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 16 }}>🚀 Tokens Launched on Bags.fm</div>
+                      {bagsTokens.length > 0 ? (
+                        <div style={{ display: "grid", gap: 10 }}>
+                          {bagsTokens.map((token: any, i: number) => (
+                            <div key={i} style={{ padding: "14px 16px", background: "rgba(255,255,255,0.02)", borderRadius: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <div>
+                                <div style={{ fontWeight: 600 }}>{token.name || token.symbol || "Token"}</div>
+                                <div style={{ fontSize: 12, color: "#6b7280" }}>{token.mint ? `${token.mint.slice(0,12)}…` : ""}</div>
+                              </div>
+                              <div style={{ textAlign: "right" }}>
+                                <div style={{ fontSize: 13, color: "#9f7aea" }}>{token.symbol}</div>
+                                {token.lifetimeFees && <div style={{ fontSize: 12, color: "#4ade80" }}>◎ {fmt(token.lifetimeFees, 3)} earned</div>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ padding: "20px", textAlign: "center", color: "#6b7280", fontSize: 14 }}>
+                          No tokens launched from this wallet yet.<br />
+                          <a href="https://bags.fm" target="_blank" rel="noreferrer" style={{ color: "#9f7aea", fontSize: 12 }}>Launch your first token on Bags.fm →</a>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Degen Card Tab */}
+            {tab === "degen" && (
+              <div style={{ display: "grid", gap: 14 }}>
+                <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 20, padding: "28px" }}>
+                  <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>🎴 Degen Card Generator</div>
+                  <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 20 }}>Your on-chain identity, turned into a shareable flex card</div>
+
+                  {/* Theme switcher */}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 22 }}>
+                    {[
+                      { id: "god", label: "🌑 Degen God", col: "#c084fc" },
+                      { id: "diamond", label: "💎 Diamond", col: "#67e8f9" },
+                      { id: "ape", label: "🦍 Ape Mode", col: "#86efac" },
+                      { id: "survivor", label: "🧟 Survivor", col: "#fb923c" },
+                    ].map(t => (
+                      <button key={t.id} onClick={() => setCardTheme(t.id)} style={{ padding: "6px 16px", background: cardTheme === t.id ? "rgba(255,255,255,0.08)" : "transparent", border: `1.5px solid ${cardTheme === t.id ? t.col : "rgba(255,255,255,0.1)"}`, borderRadius: 20, color: cardTheme === t.id ? t.col : "#6b7280", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* The Card */}
+                  <div style={{ background: theme.bg, border: `1.5px solid ${theme.glow}`, borderRadius: 20, padding: "26px", position: "relative", overflow: "hidden", boxShadow: `0 0 60px ${theme.glow}`, fontFamily: "monospace" }}>
+                    <div style={{ position: "absolute", top: -60, right: -60, width: 160, height: 160, borderRadius: "50%", background: `radial-gradient(circle,${theme.glow},transparent 70%)`, pointerEvents: "none" }} />
+
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 18 }}>
+                      <div>
+                        <div style={{ fontSize: 9, color: theme.acc, letterSpacing: 3, textTransform: "uppercase", marginBottom: 3 }}>BagTracker · Solana · Bags.fm</div>
+                        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>{short(wallet.publicKey)}</div>
+                      </div>
+                      <div style={{ padding: "4px 12px", background: theme.badge, borderRadius: 20, fontSize: 11, fontWeight: 800, color: "#fff" }}>{degen.title}</div>
+                    </div>
+
+                    <div style={{ marginBottom: 20 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: 1 }}>Degen Score</span>
+                        <span style={{ fontSize: 11, color: theme.acc }}>{degen.score}/100</span>
+                      </div>
+                      <div style={{ height: 6, background: "rgba(255,255,255,0.07)", borderRadius: 3, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${degen.score}%`, background: `linear-gradient(90deg,${theme.badge},${theme.acc})`, borderRadius: 3 }} />
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+                      <div style={{ padding: "12px", background: "rgba(255,255,255,0.04)", borderRadius: 12 }}>
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginBottom: 3 }}>SOL BALANCE</div>
+                        <div style={{ fontSize: 18, fontWeight: 900, color: theme.acc }}>◎ {fmt(sol, 3)}</div>
+                      </div>
+                      <div style={{ padding: "12px", background: "rgba(255,255,255,0.04)", borderRadius: 12 }}>
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", marginBottom: 3 }}>ALL-TIME PNL</div>
+                        <div style={{ fontSize: 18, fontWeight: 900, color: degen.pnl >= 0 ? "#4ade80" : "#f87171" }}>{degen.pnl >= 0 ? "+" : ""}{fmt(degen.pnl, 1)}%</div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 14 }}>
+                      {[
+                        { e: "🧟", v: degen.rugs, l: "Rugs" },
+                        { e: "💎", v: `${degen.diamond}%`, l: "Diamond" },
+                        { e: "📣", v: degen.calls, l: "Calls" },
+                        { e: "🎯", v: `${degen.hitRate}%`, l: "Hit Rate" },
+                        { e: "🎒", v: tokens.length, l: "Bags" },
+                        { e: "🚀", v: bagsTokens.length || "—", l: "Launched" },
+                      ].map(s => (
+                        <div key={s.l} style={{ textAlign: "center", padding: "9px 5px", background: "rgba(255,255,255,0.03)", borderRadius: 10 }}>
+                          <div style={{ fontSize: 14 }}>{s.e}</div>
+                          <div style={{ fontSize: 14, fontWeight: 900, color: "#fff", margin: "2px 0" }}>{s.v}</div>
+                          <div style={{ fontSize: 8, color: "rgba(255,255,255,0.25)", textTransform: "uppercase" }}>{s.l}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.2)", textAlign: "center", borderTop: `1px solid ${theme.glow}`, paddingTop: 12 }}>
+                      bagtracker.vercel.app · @bagsfm
+                    </div>
+                  </div>
+
+                  {/* Share */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 16 }}>
+                    <button onClick={copyCard} style={{ padding: "13px", background: copied ? "rgba(134,239,172,0.1)" : "rgba(255,255,255,0.05)", color: copied ? "#86efac" : "#e2e8f0", border: `1px solid ${copied ? "#86efac" : "rgba(255,255,255,0.1)"}`, borderRadius: 14, fontWeight: 700, cursor: "pointer" }}>
+                      {copied ? "✓ Copied!" : "📋 Copy Stats"}
+                    </button>
+                    <button onClick={tweet} style={{ padding: "13px", background: "linear-gradient(135deg,#7c3aed,#9f7aea)", color: "#fff", border: "none", borderRadius: 14, fontWeight: 700, cursor: "pointer" }}>
+                      🐦 Tweet Card
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         )}
-        
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }
