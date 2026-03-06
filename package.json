@@ -13,7 +13,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "@bagsfm/bags-sdk": "^1.2.8",
-    "@solana/web3.js": "latest"
+    "@solana/web3.js": "^1.95.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
