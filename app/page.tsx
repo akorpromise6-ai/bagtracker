@@ -5,8 +5,29 @@ import { useState, useEffect, useCallback, useRef } from "react";
 /* ─── Fonts loaded in useEffect (SSR safe) ──────────────────────────────── */
 const FONT_URL = "https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap";
 
-/* ─── App Icon ───────────────────────────────────────────────────────────── */
-const ICON_B64 = "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 representation of the architecture and workflow of our system." height=16/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></>,
+/* ─── App Icon (Swapped to pure CSS to prevent mobile copy/paste glitches) ── */
+function AppIcon({ size = 32 }) {
+  return (
+    <div style={{
+      width: size, height: size, background: "#16a34a",
+      borderRadius: size * 0.22, display: "flex", alignItems: "center",
+      justifyContent: "center", color: "white", fontWeight: "bold",
+      fontSize: size * 0.6, flexShrink: 0
+    }}>
+      $
+    </div>
+  );
+}
+
+/* ─── SVG Icon System ───────────────────────────────────────── */
+const Icon = ({ name, size=18, color="currentColor", strokeWidth=1.6 }) => {
+  const paths = {
+    grid:        <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>,
+    card:        <><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></>,
+    trophy:      <><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></>,
+    zap:         <><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></>,
+    lock:        <><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></>,
+    gift:        <><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></>,
     chevronLeft: <><polyline points="15 18 9 12 15 6"/></>,
     chevronRight:<><polyline points="9 18 15 12 9 6"/></>,
     menu:        <><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></>,
