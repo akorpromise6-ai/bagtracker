@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactElement } from "react";
 
 // ─── FONT LOADER ────────────────────────────────────────────────────────────
 const FONT_URL =
@@ -39,8 +39,15 @@ const T = {
 };
 
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
-function Ico({ n, s = 18, c = "currentColor", w = 1.6 }) {
-  const d = {
+type IconName =
+  | "dashboard" | "card" | "trophy" | "zap" | "lock" | "gift" | "chevronL" | "chevronR"
+  | "menu" | "close" | "check" | "copy" | "share" | "trending" | "users" | "target"
+  | "flame" | "eye" | "eyeOff" | "diamond" | "arrowUp" | "arrowDown" | "wallet" | "link"
+  | "crown" | "star" | "coins" | "activity" | "bell" | "logout" | "refresh" | "plus"
+  | "externalLink" | "shield" | "info";
+
+function Ico({ n, s = 18, c = "currentColor", w = 1.6 }: { n: IconName; s?: number; c?: string; w?: number }) {
+  const d: Record<IconName, ReactElement> = {
     dashboard: (
       <>
         <rect x="3" y="3" width="7" height="7" rx="1.5" />
