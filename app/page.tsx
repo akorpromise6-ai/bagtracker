@@ -1,6 +1,59 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import type { CSSProperties, ReactNode } from "react";
+
+declare global {
+  interface Window {
+    solana?: {
+      isPhantom?: boolean;
+      connect?: () => Promise<{ publicKey: PhantomPublicKey }>;
+      disconnect?: () => void;
+      on?: (event: "disconnect" | "accountChanged", handler: () => void) => void;
+      off?: (event: "disconnect" | "accountChanged", handler: () => void) => void;
+    };
+    phantom?: { solana?: Window["solana"] };
+  }
+}
+
+type PhantomPublicKey = { toString: () => string; toBase58?: () => string };
+type PhantomError = { code?: number; message?: string };
+type Tier = "god" | "diamond" | "ape" | "survivor";
+type Stats = {
+  score: number;
+  pnl: number;
+  rugs: number;
+  diamond: number;
+  calls: number;
+  hitRate: number;
+  hold: number;
+  bags: number;
+  followers: number;
+  rank: number;
+  txCount: number;
+  title: string;
+  tier: Tier;
+  isVIP: boolean;
+};
+type WalletInfo = { publicKey: string } | null;
+type ToastState = { msg: string; type: "success" | "error" | "warning" } | null;
+type ModalState =
+  | { type: "noWallet" }
+  | { type: "confirmMint" }
+  | { type: "confirmTip"; data: { name: string } }
+  | { type: "confirmWager"; data: WagerForm }
+  | null;
+type Goal = { type: "portfolio" | "followers"; target: number; label: string };
+type WagerForm = { type: string; amount: number; target: number };
+type Wager = WagerForm & { id: number; placed: string; status: "active" | "closed"; progress: number };
+type TokenAccount = { pubkey?: string; [key: string]: unknown };
+type TransactionInfo = { signature?: string; [key: string]: unknown };
+
+const isPhantomError = (err: unknown): err is PhantomError =>
+  typeof err === "object" &&
+  err !== null &&
+  "code" in err &&
+  typeof (err as { code?: unknown }).code === "number";
 
 // ─── FONT LOADER ────────────────────────────────────────────────────────────
 const FONT_URL =
@@ -39,207 +92,210 @@ const T = {
 };
 
 // ─── SVG ICONS ───────────────────────────────────────────────────────────────
-function Ico({ n, s = 18, c = "currentColor", w = 1.6 }) {
-  const d = {
-    dashboard: (
-      <>
-        <rect x="3" y="3" width="7" height="7" rx="1.5" />
-        <rect x="14" y="3" width="7" height="7" rx="1.5" />
-        <rect x="3" y="14" width="7" height="7" rx="1.5" />
-        <rect x="14" y="14" width="7" height="7" rx="1.5" />
-      </>
-    ),
-    card: (
-      <>
-        <rect x="2" y="5" width="20" height="14" rx="2" />
-        <path d="M2 10h20" />
-        <path d="M7 15h3M14 15h3" />
-      </>
-    ),
-    trophy: (
-      <>
-        <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
-        <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
-        <path d="M4 22h16" />
-        <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
-        <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
-        <path d="M18 2H6v7a6 6 0 0012 0V2z" />
-      </>
-    ),
-    zap: <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />,
-    lock: (
-      <>
-        <rect x="3" y="11" width="18" height="11" rx="2" />
-        <path d="M7 11V7a5 5 0 0110 0v4" />
-        <circle cx="12" cy="16" r="1" fill="currentColor" />
-      </>
-    ),
-    gift: (
-      <>
-        <polyline points="20 12 20 22 4 22 4 12" />
-        <rect x="2" y="7" width="20" height="5" />
-        <path d="M12 22V7" />
-        <path d="M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7z" />
-        <path d="M12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z" />
-      </>
-    ),
-    chevronL: <polyline points="15 18 9 12 15 6" />,
-    chevronR: <polyline points="9 18 15 12 9 6" />,
-    menu: (
-      <>
-        <line x1="3" y1="12" x2="21" y2="12" />
-        <line x1="3" y1="6" x2="21" y2="6" />
-        <line x1="3" y1="18" x2="21" y2="18" />
-      </>
-    ),
-    close: (
-      <>
-        <line x1="18" y1="6" x2="6" y2="18" />
-        <line x1="6" y1="6" x2="18" y2="18" />
-      </>
-    ),
-    check: <polyline points="20 6 9 17 4 12" />,
-    copy: (
-      <>
-        <rect x="9" y="9" width="13" height="13" rx="2" />
-        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-      </>
-    ),
-    share: (
-      <>
-        <circle cx="18" cy="5" r="3" />
-        <circle cx="6" cy="12" r="3" />
-        <circle cx="18" cy="19" r="3" />
-        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-      </>
-    ),
-    trending: (
-      <>
-        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
-        <polyline points="17 6 23 6 23 12" />
-      </>
-    ),
-    users: (
-      <>
-        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
-        <circle cx="9" cy="7" r="4" />
-        <path d="M23 21v-2a4 4 0 00-3-3.87" />
-        <path d="M16 3.13a4 4 0 010 7.75" />
-      </>
-    ),
-    target: (
-      <>
-        <circle cx="12" cy="12" r="10" />
-        <circle cx="12" cy="12" r="6" />
-        <circle cx="12" cy="12" r="2" />
-      </>
-    ),
-    flame: (
-      <path d="M8.5 14.5A2.5 2.5 0 0011 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 11-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 002.5 2.5z" />
-    ),
-    eye: (
-      <>
-        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-        <circle cx="12" cy="12" r="3" />
-      </>
-    ),
-    eyeOff: (
-      <>
-        <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" />
-        <line x1="1" y1="1" x2="23" y2="23" />
-      </>
-    ),
-    diamond: (
-      <path d="M2.7 10.3a2.41 2.41 0 000 3.41l7.59 7.59a2.41 2.41 0 003.41 0l7.59-7.59a2.41 2.41 0 000-3.41l-7.59-7.59a2.41 2.41 0 00-3.41 0z" />
-    ),
-    arrowUp: (
-      <>
-        <line x1="12" y1="19" x2="12" y2="5" />
-        <polyline points="5 12 12 5 19 12" />
-      </>
-    ),
-    arrowDown: (
-      <>
-        <line x1="12" y1="5" x2="12" y2="19" />
-        <polyline points="19 12 12 19 5 12" />
-      </>
-    ),
-    wallet: (
-      <>
-        <path d="M21 12V7H5a2 2 0 010-4h14v4" />
-        <path d="M3 5v14a2 2 0 002 2h16v-5" />
-        <path d="M18 12a2 2 0 000 4h4v-4z" />
-      </>
-    ),
-    link: (
-      <>
-        <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
-        <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
-      </>
-    ),
-    crown: (
-      <>
-        <path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7z" />
-        <path d="M5 20h14" />
-      </>
-    ),
-    star: (
-      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-    ),
-    coins: (
-      <>
-        <circle cx="8" cy="8" r="6" />
-        <path d="M18.09 10.37A6 6 0 1110.34 18" />
-        <path d="M7 6h1v4" />
-        <path d="m16.71 13.88.7.71-2.82 2.82" />
-      </>
-    ),
-    activity: (
-      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-    ),
-    bell: (
-      <>
-        <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
-        <path d="M13.73 21a2 2 0 01-3.46 0" />
-      </>
-    ),
-    logout: (
-      <>
-        <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
-        <polyline points="16 17 21 12 16 7" />
-        <line x1="21" y1="12" x2="9" y2="12" />
-      </>
-    ),
-    refresh: (
-      <>
-        <polyline points="23 4 23 10 17 10" />
-        <polyline points="1 20 1 14 7 14" />
-        <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
-      </>
-    ),
-    plus: (
-      <>
-        <line x1="12" y1="5" x2="12" y2="19" />
-        <line x1="5" y1="12" x2="19" y2="12" />
-      </>
-    ),
-    externalLink: (
-      <>
-        <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-        <polyline points="15 3 21 3 21 9" />
-        <line x1="10" y1="14" x2="21" y2="3" />
-      </>
-    ),
-    shield: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
-    info: (
-      <>
-        <circle cx="12" cy="12" r="10" />
-        <line x1="12" y1="16" x2="12" y2="12" />
-        <line x1="12" y1="8" x2="12.01" y2="8" />
-      </>
-    ),
-  };
+const ICONS = {
+  dashboard: (
+    <>
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </>
+  ),
+  card: (
+    <>
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <path d="M2 10h20" />
+      <path d="M7 15h3M14 15h3" />
+    </>
+  ),
+  trophy: (
+    <>
+      <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
+      <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
+      <path d="M4 22h16" />
+      <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+      <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+      <path d="M18 2H6v7a6 6 0 0012 0V2z" />
+    </>
+  ),
+  zap: <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />,
+  lock: (
+    <>
+      <rect x="3" y="11" width="18" height="11" rx="2" />
+      <path d="M7 11V7a5 5 0 0110 0v4" />
+      <circle cx="12" cy="16" r="1" fill="currentColor" />
+    </>
+  ),
+  gift: (
+    <>
+      <polyline points="20 12 20 22 4 22 4 12" />
+      <rect x="2" y="7" width="20" height="5" />
+      <path d="M12 22V7" />
+      <path d="M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7z" />
+      <path d="M12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z" />
+    </>
+  ),
+  chevronL: <polyline points="15 18 9 12 15 6" />,
+  chevronR: <polyline points="9 18 15 12 9 6" />,
+  menu: (
+    <>
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <line x1="3" y1="18" x2="21" y2="18" />
+    </>
+  ),
+  close: (
+    <>
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </>
+  ),
+  check: <polyline points="20 6 9 17 4 12" />,
+  copy: (
+    <>
+      <rect x="9" y="9" width="13" height="13" rx="2" />
+      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+    </>
+  ),
+  share: (
+    <>
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+      <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+    </>
+  ),
+  trending: (
+    <>
+      <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+      <polyline points="17 6 23 6 23 12" />
+    </>
+  ),
+  users: (
+    <>
+      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 00-3-3.87" />
+      <path d="M16 3.13a4 4 0 010 7.75" />
+    </>
+  ),
+  target: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <circle cx="12" cy="12" r="6" />
+      <circle cx="12" cy="12" r="2" />
+    </>
+  ),
+  flame: (
+    <path d="M8.5 14.5A2.5 2.5 0 0011 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 11-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 002.5 2.5z" />
+  ),
+  eye: (
+    <>
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
+  eyeOff: (
+    <>
+      <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" />
+      <line x1="1" y1="1" x2="23" y2="23" />
+    </>
+  ),
+  diamond: (
+    <path d="M2.7 10.3a2.41 2.41 0 000 3.41l7.59 7.59a2.41 2.41 0 003.41 0l7.59-7.59a2.41 2.41 0 000-3.41l-7.59-7.59a2.41 2.41 0 00-3.41 0z" />
+  ),
+  arrowUp: (
+    <>
+      <line x1="12" y1="19" x2="12" y2="5" />
+      <polyline points="5 12 12 5 19 12" />
+    </>
+  ),
+  arrowDown: (
+    <>
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <polyline points="19 12 12 19 5 12" />
+    </>
+  ),
+  wallet: (
+    <>
+      <path d="M21 12V7H5a2 2 0 010-4h14v4" />
+      <path d="M3 5v14a2 2 0 002 2h16v-5" />
+      <path d="M18 12a2 2 0 000 4h4v-4z" />
+    </>
+  ),
+  link: (
+    <>
+      <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+    </>
+  ),
+  crown: (
+    <>
+      <path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7z" />
+      <path d="M5 20h14" />
+    </>
+  ),
+  star: (
+    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+  ),
+  coins: (
+    <>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M18.09 10.37A6 6 0 1110.34 18" />
+      <path d="M7 6h1v4" />
+      <path d="m16.71 13.88.7.71-2.82 2.82" />
+    </>
+  ),
+  activity: (
+    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+  ),
+  bell: (
+    <>
+      <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 01-3.46 0" />
+    </>
+  ),
+  logout: (
+    <>
+      <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </>
+  ),
+  refresh: (
+    <>
+      <polyline points="23 4 23 10 17 10" />
+      <polyline points="1 20 1 14 7 14" />
+      <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+    </>
+  ),
+  plus: (
+    <>
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </>
+  ),
+  externalLink: (
+    <>
+      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
+    </>
+  ),
+  shield: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
+  info: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
+    </>
+  ),
+} as const;
+
+type IconName = keyof typeof ICONS;
+
+function Ico({ n, s = 18, c = "currentColor", w = 1.6 }: { n: IconName; s?: number; c?: string; w?: number }) {
   return (
     <svg
       width={s}
@@ -252,13 +308,13 @@ function Ico({ n, s = 18, c = "currentColor", w = 1.6 }) {
       strokeLinejoin="round"
       style={{ display: "block", flexShrink: 0 }}
     >
-      {d[n]}
+      {ICONS[n]}
     </svg>
   );
 }
 
 // ─── APP LOGO ────────────────────────────────────────────────────────────────
-function Logo({ size = 32 }) {
+function Logo({ size = 32 }: { size?: number }) {
   return (
     <svg
       width={size}
@@ -296,7 +352,7 @@ function Logo({ size = 32 }) {
 }
 
 // ─── SOLANA RPC ──────────────────────────────────────────────────────────────
-async function rpc(method, params) {
+async function rpc(method: string, params: unknown[]) {
   try {
     const r = await fetch(RPC_URL, {
       method: "POST",
@@ -309,12 +365,12 @@ async function rpc(method, params) {
   }
 }
 
-async function getSolBalance(pk) {
+async function getSolBalance(pk: string) {
   const r = await rpc("getBalance", [pk]);
   return r ? r.value / 1e9 : 0;
 }
 
-async function getTokenAccounts(pk) {
+async function getTokenAccounts(pk: string) {
   const r = await rpc("getTokenAccountsByOwner", [
     pk,
     { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
@@ -323,26 +379,27 @@ async function getTokenAccounts(pk) {
   return r ? r.value : [];
 }
 
-async function getRecentTxs(pk) {
+async function getRecentTxs(pk: string) {
   const r = await rpc("getSignaturesForAddress", [pk, { limit: 20 }]);
   return r || [];
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
-const fmt$ = (n, d = 2) =>
+const fmt$ = (n: number | string, d = 2) =>
   "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
-const fmtN = (n, d = 2) =>
+const fmtN = (n: number | string, d = 2) =>
   Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
-const fmtSol = (n) => "◎" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-const shrt = (a) => (a ? a.slice(0, 5) + "..." + a.slice(-4) : "");
-const rng = (seed, lo, hi) => {
+const fmtSol = (n: number | string) =>
+  "◎" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+const shrt = (a: string | null | undefined) => (a ? a.slice(0, 5) + "..." + a.slice(-4) : "");
+const rng = (seed: string, lo: number, hi: number) => {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (Math.imul(31, h) + seed.charCodeAt(i)) | 0;
   return lo + (Math.abs(h % 1000) / 1000) * (hi - lo);
 };
-const ri = (s, a, b) => Math.floor(rng(s, a, b + 1));
+const ri = (s: string, a: number, b: number) => Math.floor(rng(s, a, b + 1));
 
-function calcDegenScore(pk, sol, tokenCount, txCount) {
+function calcDegenScore(pk: string, sol: number, tokenCount: number, txCount: number) {
   const ageFactor = Math.min(txCount * 0.5, 25);
   const solFactor = Math.min(sol * 1.5, 25);
   const tokenFactor = Math.min(tokenCount * 1.2, 25);
@@ -350,7 +407,7 @@ function calcDegenScore(pk, sol, tokenCount, txCount) {
   return Math.min(100, Math.floor(ageFactor + solFactor + tokenFactor + actFactor));
 }
 
-function buildStats(pk, sol, tokens, txs) {
+function buildStats(pk: string, sol: number, tokens: ReadonlyArray<TokenAccount>, txs: ReadonlyArray<TransactionInfo>): Stats {
   const score = calcDegenScore(pk, sol, tokens.length, txs.length);
   const pnl = rng(pk + "pnl", -45, 320);
   return {
@@ -375,32 +432,52 @@ function buildStats(pk, sol, tokens, txs) {
         : score >= 35
         ? "Rug Survivor"
         : "Paper Hands",
-    tier: score >= 90 ? "god" : score >= 75 ? "diamond" : score >= 55 ? "ape" : "survivor",
+    tier: (score >= 90 ? "god" : score >= 75 ? "diamond" : score >= 55 ? "ape" : "survivor") as Tier,
     isVIP: score >= 82,
   };
 }
 
 // ─── ANIMATED NUMBER ─────────────────────────────────────────────────────────
-function AnimNum({ to, fmt = fmtN, dec = 2, dur = 1000 }) {
+function AnimNum({
+  to,
+  fmt = fmtN,
+  dec = 2,
+  dur = 1000,
+}: {
+  to: number | string;
+  fmt?: (value: number, decimals: number) => ReactNode;
+  dec?: number;
+  dur?: number;
+}) {
   const [v, setV] = useState(0);
-  const raf = useRef();
+  const raf = useRef<number | null>(null);
   useEffect(() => {
-    const target = parseFloat(to) || 0;
+    const target = parseFloat(String(to)) || 0;
     const t0 = performance.now();
-    const tick = (now) => {
+    const tick = (now: number) => {
       const p = Math.min((now - t0) / dur, 1);
       const ease = 1 - Math.pow(1 - p, 4);
       setV(target * ease);
       if (p < 1) raf.current = requestAnimationFrame(tick);
     };
     raf.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf.current);
+    return () => {
+      if (raf.current !== null) cancelAnimationFrame(raf.current);
+    };
   }, [to, dur]);
   return <>{fmt(v, dec)}</>;
 }
 
 // ─── TOAST ───────────────────────────────────────────────────────────────────
-function Toast({ msg, type = "success", onClose }) {
+function Toast({
+  msg,
+  type = "success",
+  onClose,
+}: {
+  msg: string;
+  type?: "success" | "error" | "warning";
+  onClose: () => void;
+}) {
   useEffect(() => {
     const t = setTimeout(onClose, 3000);
     return () => clearTimeout(t);
@@ -439,7 +516,17 @@ function Toast({ msg, type = "success", onClose }) {
 }
 
 // ─── MODAL ───────────────────────────────────────────────────────────────────
-function Modal({ title, children, onClose, width = 480 }) {
+function Modal({
+  title,
+  children,
+  onClose,
+  width = 480,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+  width?: number;
+}) {
   return (
     <div
       style={{
@@ -500,7 +587,17 @@ function Modal({ title, children, onClose, width = 480 }) {
 }
 
 // ─── CARD ────────────────────────────────────────────────────────────────────
-function Card({ children, style = {}, accent = false, glow = false }) {
+function Card({
+  children,
+  style = {},
+  accent = false,
+  glow = false,
+}: {
+  children: ReactNode;
+  style?: CSSProperties;
+  accent?: boolean;
+  glow?: boolean;
+}) {
   return (
     <div
       style={{
@@ -521,8 +618,8 @@ function Card({ children, style = {}, accent = false, glow = false }) {
   );
 }
 
-// ─── LABEL ──────────────────────────────────��────────────────────────────────
-function Label({ children, style = {} }) {
+// ─── LABEL ────────────────────────────────────────────────────────────────────
+function Label({ children, style = {} }: { children: ReactNode; style?: CSSProperties }) {
   return (
     <div
       style={{
@@ -542,7 +639,17 @@ function Label({ children, style = {} }) {
 }
 
 // ─── PROGRESS BAR ────────────────────────────────────────────────────────────
-function Bar({ pct, color = T.green, height = 6, animated = true }) {
+function Bar({
+  pct,
+  color = T.green,
+  height = 6,
+  animated = true,
+}: {
+  pct: number;
+  color?: string;
+  height?: number;
+  animated?: boolean;
+}) {
   return (
     <div
       style={{
@@ -567,7 +674,21 @@ function Bar({ pct, color = T.green, height = 6, animated = true }) {
 }
 
 // ─── STAT BOX ────────────────────────────────────────────────────────────────
-function StatBox({ label, value, sub, icon, color = T.text, bg = T.surfaceAlt }) {
+function StatBox({
+  label,
+  value,
+  sub,
+  icon,
+  color = T.text,
+  bg = T.surfaceAlt,
+}: {
+  label: string;
+  value: ReactNode;
+  sub?: ReactNode;
+  icon?: IconName;
+  color?: string;
+  bg?: string;
+}) {
   return (
     <div style={{ background: bg, border: `1px solid ${T.border}`, borderRadius: 14, padding: "16px 14px" }}>
       {icon && (
@@ -608,6 +729,16 @@ function Btn({
   icon,
   style = {},
   fullWidth = false,
+}: {
+  children?: ReactNode;
+  onClick?: () => void;
+  variant?: "primary" | "secondary" | "dark" | "danger" | "ghost" | "gold";
+  size?: "sm" | "md" | "lg";
+  disabled?: boolean;
+  loading?: boolean;
+  icon?: IconName;
+  style?: CSSProperties;
+  fullWidth?: boolean;
 }) {
   const styles = {
     primary: { bg: T.green, color: "white", border: T.green },
@@ -696,7 +827,7 @@ function Background() {
 }
 
 // ─── LEADERBOARD DATA ────────────────────────────────────────────────────────
-const LB = [
+const LB: Array<{ rank: number; name: string; sol: number; score: number; pnl: number; followers: number; tier: Tier; wallet: string }> = [
   { rank: 1, name: "DegenGod.sol", sol: 18420, score: 99, pnl: 892, followers: 48200, tier: "god", wallet: "DgN7xK9mP2qR" },
   { rank: 2, name: "DiamondFlip.sol", sol: 9810, score: 94, pnl: 541, followers: 32100, tier: "diamond", wallet: "DF2xP9mQ3rS" },
   { rank: 3, name: "ApeKing.sol", sol: 7050, score: 88, pnl: 398, followers: 21800, tier: "ape", wallet: "AK3yQ8nR4sT" },
@@ -709,13 +840,57 @@ const LB = [
   { rank: 10, name: "HoldStrong.sol", sol: 880, score: 47, pnl: 31, followers: 2600, tier: "survivor", wallet: "HS0fX1uY1zA" },
 ];
 
-const TIER_C = { god: T.purple, diamond: "#0891b2", ape: T.green, survivor: T.gold };
-const TIER_BG = { god: T.purpleLight, diamond: "#cffafe", ape: T.greenLight, survivor: T.goldLight };
+const TIER_C: Record<Tier, string> = { god: T.purple, diamond: "#0891b2", ape: T.green, survivor: T.gold };
+const TIER_BG: Record<Tier, string> = { god: T.purpleLight, diamond: "#cffafe", ape: T.greenLight, survivor: T.goldLight };
+
+const GOAL_OPTIONS: Goal[] = [
+  { type: "portfolio", target: 10000, label: "$10k" },
+  { type: "portfolio", target: 50000, label: "$50k" },
+  { type: "followers", target: 10000, label: "10k flw" },
+];
+const FILTERS: Array<"all" | Tier> = ["all", "god", "diamond", "ape", "survivor"];
+const LANDING_FEATURES: Array<[IconName, string]> = [
+  ["diamond", "Mintable NFT Cards"],
+  ["zap", "Onchain Wagers"],
+  ["lock", "VIP Token Gate"],
+  ["gift", "Referral Bounties"],
+  ["trophy", "Live Leaderboard"],
+  ["flame", "Daily Streaks"],
+];
+const HIGHLIGHT_FEATURES: Array<{ icon: IconName; title: string; desc: string }> = [
+  { icon: "shield", title: "Non-Custodial", desc: "We never hold your keys. Read-only wallet access." },
+  { icon: "activity", title: "Real-Time Data", desc: "Live SOL balance and token data from Solana mainnet." },
+  { icon: "trending", title: "On-Chain Proof", desc: "All wagers and NFT mints are verifiable on-chain." },
+];
+const VIP_PERKS: Array<[IconName, string]> = [
+  ["diamond", "Priority Support"],
+  ["bell", "Instant Whale Alerts"],
+  ["gift", "Boosted Referrals"],
+  ["shield", "Rug Protection Radar"],
+];
+const BREAKDOWN_STATS: Array<{ icon: IconName; label: string; getValue: (stats: Stats) => ReactNode }> = [
+  { icon: "users", label: "Rugs Survived", getValue: (s) => s.rugs },
+  { icon: "diamond", label: "Diamond Hands", getValue: (s) => `${s.diamond}%` },
+  { icon: "bell", label: "Calls Made", getValue: (s) => s.calls },
+  { icon: "target", label: "Hit Rate", getValue: (s) => `${s.hitRate}%` },
+  { icon: "trending", label: "Followers", getValue: (s) => fmtN(s.followers, 0) },
+  { icon: "activity", label: "Longest Hold", getValue: (s) => `${s.hold}d` },
+];
 
 // ─── DEGEN CARD COMPONENT ────────────────────────────────────────────────────
-function DegenCardVisual({ stats, pubkey, sol, minted }) {
+function DegenCardVisual({
+  stats,
+  pubkey,
+  sol,
+  minted,
+}: {
+  stats: Stats;
+  pubkey: string | null;
+  sol: number;
+  minted: boolean;
+}) {
   const pos = stats.pnl >= 0;
-  const tierColors = {
+  const tierColors: Record<Tier, [string, string]> = {
     god: ["#7c3aed", "#a855f7"],
     diamond: ["#0891b2", "#22d3ee"],
     ape: ["#15803d", "#4ade80"],
@@ -927,7 +1102,7 @@ function DegenCardVisual({ stats, pubkey, sol, minted }) {
 }
 
 // ─── NAV CONFIG ──────────────────────────────────────────────────────────────
-const NAV = [
+const NAV: Array<{ id: string; icon: IconName; label: string; badge?: string }> = [
   { id: "dashboard", icon: "dashboard", label: "Dashboard" },
   { id: "degencard", icon: "card", label: "Degen Card" },
   { id: "leaderboard", icon: "trophy", label: "Leaderboard" },
@@ -941,18 +1116,18 @@ const NAV = [
 // ════════════════════════════════════════════════════════════════════════════
 export default function BagTracker() {
   // Wallet state
-  const [wallet, setWallet] = useState(null);
+  const [wallet, setWallet] = useState<WalletInfo>(null);
   const [sol, setSol] = useState(0);
-  const [tokens, setTokens] = useState([]);
-  const [txs, setTxs] = useState([]);
+  const [tokens, setTokens] = useState<TokenAccount[]>([]);
+  const [txs, setTxs] = useState<TransactionInfo[]>([]);
   const [connecting, setConnecting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   // App state
-  const [page, setPage] = useState("dashboard");
-  const [stats, setStats] = useState(null);
-  const [toast, setToast] = useState(null);
-  const [modal, setModal] = useState(null); // { type, data }
+  const [page, setPage] = useState<string>("dashboard");
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [toast, setToast] = useState<ToastState>(null);
+  const [modal, setModal] = useState<ModalState>(null); // { type, data }
 
   // UI state
   const [sideOpen, setSideOpen] = useState(true);
@@ -964,15 +1139,15 @@ export default function BagTracker() {
   const [minting, setMinting] = useState(false);
   const [streak, setStreak] = useState(4);
   const [checkedIn, setCheckedIn] = useState(false);
-  const [goal, setGoal] = useState({ type: "portfolio", target: 10000, label: "$10,000" });
-  const [wagers, setWagers] = useState([]);
-  const [watching, setWatching] = useState(["DegenGod.sol", "DiamondFlip.sol"]);
-  const [tipping, setTipping] = useState(null);
-  const [tipped, setTipped] = useState({});
+  const [goal, setGoal] = useState<Goal>({ type: "portfolio", target: 10000, label: "$10k" });
+  const [wagers, setWagers] = useState<Wager[]>([]);
+  const [watching, setWatching] = useState<string[]>(["DegenGod.sol", "DiamondFlip.sol"]);
+  const [tipping, setTipping] = useState<string | null>(null);
+  const [tipped, setTipped] = useState<Record<string, boolean>>({});
   const [refCopied, setRefCopied] = useState(false);
   const [refEarnings] = useState({ refs: 7, converted: 3, sol: 0.35 });
-  const [wagerForm, setWagerForm] = useState({ type: "followers", amount: 5, target: 1000 });
-  const [lbFilter, setLbFilter] = useState("all");
+  const [wagerForm, setWagerForm] = useState<WagerForm>({ type: "followers", amount: 5, target: 1000 });
+  const [lbFilter, setLbFilter] = useState<"all" | Tier>("all");
   const [solPrice, setSolPrice] = useState(SOL_PRICE_USD);
 
   const totalUsd = sol * solPrice;
@@ -1022,12 +1197,12 @@ export default function BagTracker() {
     return () => p.off?.("disconnect", fn);
   }, []);
 
-  const showToast = (msg, type = "success") => setToast({ msg, type });
+  const showToast = (msg: string, type: NonNullable<ToastState>["type"] = "success") => setToast({ msg, type });
 
   // Connect wallet
   const connect = useCallback(async () => {
     const p = window?.solana || window?.phantom?.solana;
-    if (!p?.isPhantom) {
+    if (!p?.isPhantom || !p.connect) {
       setModal({ type: "noWallet" });
       return;
     }
@@ -1046,8 +1221,9 @@ export default function BagTracker() {
       setTxs(txList);
       setStats(buildStats(pk, bal, tkns, txList));
       showToast("Wallet connected — Solana Mainnet");
-    } catch (e) {
-      if (e.code !== 4001) showToast("Connection failed. Try again.", "error");
+    } catch (e: unknown) {
+      const code = isPhantomError(e) ? e.code : undefined;
+      if (code !== 4001) showToast("Connection failed. Try again.", "error");
     } finally {
       setConnecting(false);
     }
@@ -1103,7 +1279,7 @@ export default function BagTracker() {
   };
 
   // Tip
-  const doTip = (name) => {
+  const doTip = (name: string) => {
     if (!wallet) {
       showToast("Connect wallet first", "warning");
       return;
@@ -1111,7 +1287,7 @@ export default function BagTracker() {
     setModal({ type: "confirmTip", data: { name } });
   };
 
-  const confirmTip = async (name) => {
+  const confirmTip = async (name: string) => {
     setModal(null);
     setTipping(name);
     await new Promise((r) => setTimeout(r, 1600));
@@ -1137,7 +1313,7 @@ export default function BagTracker() {
     setModal({ type: "confirmWager", data: wagerForm });
   };
 
-  const confirmWager = (form) => {
+  const confirmWager = (form: WagerForm) => {
     setModal(null);
     setWagers((w) => [
       ...w,
@@ -1153,13 +1329,13 @@ export default function BagTracker() {
   };
 
   // Cancel wager
-  const cancelWager = (id) => {
+  const cancelWager = (id: number) => {
     setWagers((w) => w.filter((x) => x.id !== id));
     showToast("Wager cancelled — SOL returned");
   };
 
   // Watch whale
-  const toggleWatch = (name) => {
+  const toggleWatch = (name: string) => {
     if (watching.includes(name)) {
       setWatching((w) => w.filter((x) => x !== name));
       showToast(`Removed ${name} from watch list`);
@@ -1179,11 +1355,12 @@ export default function BagTracker() {
   };
 
   // Share
-  const shareX = (text) => window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`, "_blank");
-  const shareCast = (text) =>
+  const shareX = (text: string) =>
+    window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`, "_blank");
+  const shareCast = (text: string) =>
     window.open(`https://warpcast.com/~/compose?text=${encodeURIComponent(text)}`, "_blank");
 
-  const navigate = (id) => {
+  const navigate = (id: string) => {
     if (!wallet && !["leaderboard"].includes(id)) {
       showToast("Connect your wallet first", "warning");
       return;
@@ -1248,14 +1425,7 @@ export default function BagTracker() {
           maxWidth: 500,
         }}
       >
-        {[
-          ["diamond", "Mintable NFT Cards"],
-          ["zap", "Onchain Wagers"],
-          ["lock", "VIP Token Gate"],
-          ["gift", "Referral Bounties"],
-          ["trophy", "Live Leaderboard"],
-          ["flame", "Daily Streaks"],
-        ].map(([ico, t]) => (
+        {LANDING_FEATURES.map(([ico, t]) => (
           <div
             key={t}
             style={{
@@ -1299,11 +1469,7 @@ export default function BagTracker() {
           width: "100%",
         }}
       >
-        {[
-          { icon: "shield", title: "Non-Custodial", desc: "We never hold your keys. Read-only wallet access." },
-          { icon: "activity", title: "Real-Time Data", desc: "Live SOL balance and token data from Solana mainnet." },
-          { icon: "trending", title: "On-Chain Proof", desc: "All wagers and NFT mints are verifiable on-chain." },
-        ].map((f) => (
+        {HIGHLIGHT_FEATURES.map((f) => (
           <Card key={f.title} style={{ textAlign: "left" }}>
             <Ico n={f.icon} s={20} c={T.green} />
             <div style={{ fontWeight: 700, fontSize: 14, color: T.text, marginTop: 10, marginBottom: 4 }}>
@@ -1450,11 +1616,7 @@ export default function BagTracker() {
                 : `${fmtN(stats.followers, 0)} of ${fmtN(goal.target, 0)} followers`}
             </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {[
-                { type: "portfolio", target: 10000, label: "$10k" },
-                { type: "portfolio", target: 50000, label: "$50k" },
-                { type: "followers", target: 10000, label: "10k flw" },
-              ].map((g) => (
+            {GOAL_OPTIONS.map((g) => (
                 <button
                   key={g.label}
                   onClick={() => setGoal(g)}
@@ -1488,14 +1650,7 @@ export default function BagTracker() {
             </span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(110px,1fr))", gap: 10 }}>
-            {[
-              { icon: "users", label: "Rugs Survived", value: stats.rugs },
-              { icon: "diamond", label: "Diamond Hands", value: `${stats.diamond}%` },
-              { icon: "bell", label: "Calls Made", value: stats.calls },
-              { icon: "target", label: "Hit Rate", value: `${stats.hitRate}%` },
-              { icon: "trending", label: "Followers", value: fmtN(stats.followers, 0) },
-              { icon: "activity", label: "Longest Hold", value: `${stats.hold}d` },
-            ].map((s) => (
+            {BREAKDOWN_STATS.map((s) => (
               <div
                 key={s.label}
                 style={{
@@ -1516,7 +1671,7 @@ export default function BagTracker() {
                     marginTop: 8,
                   }}
                 >
-                  {s.value}
+                  {s.getValue(stats)}
                 </div>
                 <div
                   style={{
@@ -1601,7 +1756,7 @@ export default function BagTracker() {
 
   // ── Degen card page
   const DegenCardPage =
-    stats && (
+    wallet && stats ? (
       <div style={{ display: "grid", gap: 16 }}>
         <Card glow accent>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -1634,7 +1789,7 @@ export default function BagTracker() {
           </div>
         </Card>
       </div>
-    );
+    ) : null;
 
   // ── Leaderboard page
   const LeaderboardPage = (
@@ -1644,7 +1799,7 @@ export default function BagTracker() {
           <Ico n="trophy" s={16} c={T.green} />
           <span style={{ fontWeight: 700, fontSize: 14, color: T.text }}>Top Degens</span>
           <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-            {["all", "god", "diamond", "ape", "survivor"].map((f) => (
+            {FILTERS.map((f) => (
               <button
                 key={f}
                 onClick={() => setLbFilter(f)}
@@ -1856,12 +2011,7 @@ export default function BagTracker() {
         <Card>
           <Label>VIP Perks</Label>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12 }}>
-            {[
-              ["diamond", "Priority Support"],
-              ["bell", "Instant Whale Alerts"],
-              ["gift", "Boosted Referrals"],
-              ["shield", "Rug Protection Radar"],
-            ].map(([ico, title]) => (
+            {VIP_PERKS.map(([ico, title]) => (
               <div
                 key={title}
                 style={{
