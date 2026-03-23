@@ -1535,15 +1535,16 @@ export default function BagTracker() {
           body: JSON.stringify({ wallet: wallet.publicKey, ...form }),
         });
         if (res?.signature) await waitForConfirmation(res.signature);
-        if (res?.wager) {
+        const wager = res?.wager;
+        if (wager) {
           setWagers((w) => [
             ...w,
             {
               ...form,
-              id: res.wager.id || Date.now(),
-              placed: (res.wager.placed as ISODateString) || toISODateString(new Date()),
-              status: (res.wager.status as Wager["status"]) || "active",
-              progress: Number(res.wager.progress || 0),
+              id: wager.id ?? Date.now(),
+              placed: (wager.placed as ISODateString) ?? toISODateString(new Date()),
+              status: (wager.status as Wager["status"]) ?? "active",
+              progress: Number(wager.progress ?? 0),
             },
           ]);
         }
