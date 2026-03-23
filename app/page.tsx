@@ -1,6 +1,52 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, type ReactElement } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactElement, type ReactNode, type CSSProperties } from "react";
+
+type WalletInfo = { publicKey: string };
+type TokenAccount = Record<string, unknown>;
+type TransactionInfo = Record<string, unknown>;
+type Tier = "god" | "diamond" | "ape" | "survivor";
+type Goal = { type: "portfolio" | "followers"; target: number; label: string };
+type WagerForm = { type: "followers" | "pnl" | "rank"; target: number; amount: number };
+type Wager = WagerForm & { id: number; placed: string; status: "active" | "settled"; progress: number };
+type Stats = {
+  score: number;
+  pnl: number;
+  rugs: number;
+  diamond: number;
+  calls: number;
+  hitRate: number;
+  hold: number;
+  bags: number;
+  followers: number;
+  rank: number;
+  txCount: number;
+  title: string;
+  tier: Tier;
+  isVIP: boolean;
+};
+type ToastState = { msg: string; type: "success" | "error" | "warning" } | null;
+type ModalState =
+  | { type: "noWallet" }
+  | { type: "confirmMint" }
+  | { type: "confirmTip"; data: { name: string } }
+  | { type: "confirmWager"; data: WagerForm }
+  | null;
+
+type PhantomProvider = {
+  isPhantom?: boolean;
+  connect?: () => Promise<{ publicKey: { toString: () => string } }>;
+  disconnect?: () => Promise<void>;
+  on?: (event: string, handler: () => void) => void;
+  off?: (event: string, handler: () => void) => void;
+};
+
+declare global {
+  interface Window {
+    solana?: PhantomProvider;
+    phantom?: { solana?: PhantomProvider };
+  }
+}
 
 // ─── FONT LOADER ────────────────────────────────────────────────────────────
 const FONT_URL =
@@ -241,14 +287,6 @@ const ICONS = {
 } as const;
 
 type IconName = keyof typeof ICONS;
-
-function Ico({ n, s = 18, c = "currentColor", w = 1.6 }: { n: IconName; s?: number; c?: string; w?: number }) {
-type IconName =
-  | "dashboard" | "card" | "trophy" | "zap" | "lock" | "gift" | "chevronL" | "chevronR"
-  | "menu" | "close" | "check" | "copy" | "share" | "trending" | "users" | "target"
-  | "flame" | "eye" | "eyeOff" | "diamond" | "arrowUp" | "arrowDown" | "wallet" | "link"
-  | "crown" | "star" | "coins" | "activity" | "bell" | "logout" | "refresh" | "plus"
-  | "externalLink" | "shield" | "info";
 
 function Ico({ n, s = 18, c = "currentColor", w = 1.6 }: { n: IconName; s?: number; c?: string; w?: number }) {
   const d: Record<IconName, ReactElement> = {
@@ -590,6 +628,10 @@ function buildStats(pk: string, sol: number, tokens: ReadonlyArray<TokenAccount>
     tier: (score >= 90 ? "god" : score >= 75 ? "diamond" : score >= 55 ? "ape" : "survivor") as Tier,
     isVIP: score >= 82,
   };
+}
+
+function isPhantomError(e: unknown): e is { code: number } {
+  return typeof e === "object" && e !== null && "code" in e && typeof (e as { code?: unknown }).code === "number";
 }
 
 // ─── ANIMATED NUMBER ─────────────────────────────────────────────────────────
