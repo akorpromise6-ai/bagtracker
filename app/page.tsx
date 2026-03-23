@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, type ReactElement, type ReactNode, type CSSProperties } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode, type CSSProperties } from "react";
 
 type PublicKeyString = string & { __brand: "PublicKey" };
 type WalletInfo = { publicKey: PublicKeyString };
@@ -48,6 +48,22 @@ type Stats = {
   tier: Tier;
   isVIP: boolean;
 };
+type LeaderboardEntry = {
+  rank: number;
+  name: string;
+  sol: number;
+  score: number;
+  pnl: number;
+  followers: number;
+  tier: Tier;
+  wallet: string;
+};
+type BagsProfile = {
+  stats?: Partial<Stats>;
+  minted?: boolean;
+  wagers?: Array<Partial<Wager>>;
+  watching?: string[];
+};
 type ToastState = { msg: string; type: "success" | "error" | "warning" } | null;
 type ModalState =
   | { type: "noWallet" }
@@ -91,6 +107,7 @@ const FONT_URL =
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 const SOL_PRICE_USD = 178;
 const RPC_URL = "https://api.mainnet-beta.solana.com";
+const BAGS_API = (process.env.NEXT_PUBLIC_BAGS_API || "https://api.bags.fm").replace(/\/$/, "");
 
 // ─── DESIGN TOKENS ──────────────────────────────────────────────────────────
 const T = {
@@ -325,206 +342,6 @@ const ICONS = {
 type IconName = keyof typeof ICONS;
 
 function Ico({ n, s = 18, c = "currentColor", w = 1.6 }: { n: IconName; s?: number; c?: string; w?: number }) {
-  const d: Record<IconName, ReactElement> = {
-    dashboard: (
-      <>
-        <rect x="3" y="3" width="7" height="7" rx="1.5" />
-        <rect x="14" y="3" width="7" height="7" rx="1.5" />
-        <rect x="3" y="14" width="7" height="7" rx="1.5" />
-        <rect x="14" y="14" width="7" height="7" rx="1.5" />
-      </>
-    ),
-    card: (
-      <>
-        <rect x="2" y="5" width="20" height="14" rx="2" />
-        <path d="M2 10h20" />
-        <path d="M7 15h3M14 15h3" />
-      </>
-    ),
-    trophy: (
-      <>
-        <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
-        <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
-        <path d="M4 22h16" />
-        <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
-        <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
-        <path d="M18 2H6v7a6 6 0 0012 0V2z" />
-      </>
-    ),
-    zap: <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />,
-    lock: (
-      <>
-        <rect x="3" y="11" width="18" height="11" rx="2" />
-        <path d="M7 11V7a5 5 0 0110 0v4" />
-        <circle cx="12" cy="16" r="1" fill="currentColor" />
-      </>
-    ),
-    gift: (
-      <>
-        <polyline points="20 12 20 22 4 22 4 12" />
-        <rect x="2" y="7" width="20" height="5" />
-        <path d="M12 22V7" />
-        <path d="M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7z" />
-        <path d="M12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z" />
-      </>
-    ),
-    chevronL: <polyline points="15 18 9 12 15 6" />,
-    chevronR: <polyline points="9 18 15 12 9 6" />,
-    menu: (
-      <>
-        <line x1="3" y1="12" x2="21" y2="12" />
-        <line x1="3" y1="6" x2="21" y2="6" />
-        <line x1="3" y1="18" x2="21" y2="18" />
-      </>
-    ),
-    close: (
-      <>
-        <line x1="18" y1="6" x2="6" y2="18" />
-        <line x1="6" y1="6" x2="18" y2="18" />
-      </>
-    ),
-    check: <polyline points="20 6 9 17 4 12" />,
-    copy: (
-      <>
-        <rect x="9" y="9" width="13" height="13" rx="2" />
-        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-      </>
-    ),
-    share: (
-      <>
-        <circle cx="18" cy="5" r="3" />
-        <circle cx="6" cy="12" r="3" />
-        <circle cx="18" cy="19" r="3" />
-        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-      </>
-    ),
-    trending: (
-      <>
-        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
-        <polyline points="17 6 23 6 23 12" />
-      </>
-    ),
-    users: (
-      <>
-        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
-        <circle cx="9" cy="7" r="4" />
-        <path d="M23 21v-2a4 4 0 00-3-3.87" />
-        <path d="M16 3.13a4 4 0 010 7.75" />
-      </>
-    ),
-    target: (
-      <>
-        <circle cx="12" cy="12" r="10" />
-        <circle cx="12" cy="12" r="6" />
-        <circle cx="12" cy="12" r="2" />
-      </>
-    ),
-    flame: (
-      <path d="M8.5 14.5A2.5 2.5 0 0011 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 11-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 002.5 2.5z" />
-    ),
-    eye: (
-      <>
-        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-        <circle cx="12" cy="12" r="3" />
-      </>
-    ),
-    eyeOff: (
-      <>
-        <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" />
-        <line x1="1" y1="1" x2="23" y2="23" />
-      </>
-    ),
-    diamond: (
-      <path d="M2.7 10.3a2.41 2.41 0 000 3.41l7.59 7.59a2.41 2.41 0 003.41 0l7.59-7.59a2.41 2.41 0 000-3.41l-7.59-7.59a2.41 2.41 0 00-3.41 0z" />
-    ),
-    arrowUp: (
-      <>
-        <line x1="12" y1="19" x2="12" y2="5" />
-        <polyline points="5 12 12 5 19 12" />
-      </>
-    ),
-    arrowDown: (
-      <>
-        <line x1="12" y1="5" x2="12" y2="19" />
-        <polyline points="19 12 12 19 5 12" />
-      </>
-    ),
-    wallet: (
-      <>
-        <path d="M21 12V7H5a2 2 0 010-4h14v4" />
-        <path d="M3 5v14a2 2 0 002 2h16v-5" />
-        <path d="M18 12a2 2 0 000 4h4v-4z" />
-      </>
-    ),
-    link: (
-      <>
-        <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
-        <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
-      </>
-    ),
-    crown: (
-      <>
-        <path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7z" />
-        <path d="M5 20h14" />
-      </>
-    ),
-    star: (
-      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-    ),
-    coins: (
-      <>
-        <circle cx="8" cy="8" r="6" />
-        <path d="M18.09 10.37A6 6 0 1110.34 18" />
-        <path d="M7 6h1v4" />
-        <path d="m16.71 13.88.7.71-2.82 2.82" />
-      </>
-    ),
-    activity: (
-      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-    ),
-    bell: (
-      <>
-        <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
-        <path d="M13.73 21a2 2 0 01-3.46 0" />
-      </>
-    ),
-    logout: (
-      <>
-        <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
-        <polyline points="16 17 21 12 16 7" />
-        <line x1="21" y1="12" x2="9" y2="12" />
-      </>
-    ),
-    refresh: (
-      <>
-        <polyline points="23 4 23 10 17 10" />
-        <polyline points="1 20 1 14 7 14" />
-        <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
-      </>
-    ),
-    plus: (
-      <>
-        <line x1="12" y1="5" x2="12" y2="19" />
-        <line x1="5" y1="12" x2="19" y2="12" />
-      </>
-    ),
-    externalLink: (
-      <>
-        <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-        <polyline points="15 3 21 3 21 9" />
-        <line x1="10" y1="14" x2="21" y2="3" />
-      </>
-    ),
-    shield: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
-    info: (
-      <>
-        <circle cx="12" cy="12" r="10" />
-        <line x1="12" y1="16" x2="12" y2="12" />
-        <line x1="12" y1="8" x2="12.01" y2="8" />
-      </>
-    ),
-  };
   return (
     <svg
       width={s}
@@ -613,6 +430,76 @@ async function getRecentTxs(pk: string) {
   return r || [];
 }
 
+async function fetchJson<T>(path: string, init?: RequestInit): Promise<T | null> {
+  try {
+    const res = await fetch(`${BAGS_API}${path.startsWith("/") ? path : `/${path}`}`, {
+      ...init,
+      headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function waitForConfirmation(signature: string) {
+  for (let i = 0; i < 6; i++) {
+    const status = await rpc("getSignatureStatuses", [[signature]]);
+    const val = status?.value?.[0];
+    if (val?.confirmationStatus === "finalized" || val?.confirmationStatus === "confirmed") return true;
+    await new Promise((r) => setTimeout(r, 1200));
+  }
+  return false;
+}
+
+async function fetchSolUsdPrice() {
+  const price = await fetchJson<{ data?: { SOL?: { price?: number } } }>("/price/sol");
+  if (price?.data?.SOL?.price) return price.data.SOL.price;
+  try {
+    const res = await fetch("https://price.jup.ag/v6/price?ids=SOL");
+    const json = await res.json();
+    return json?.data?.SOL?.price as number | undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function fetchBagsProfile(pk: string) {
+  return (
+    (await fetchJson<BagsProfile>(`/profiles/${pk}`)) ||
+    (await fetchJson<BagsProfile>(`/profile?wallet=${pk}`)) ||
+    null
+  );
+}
+
+function normalizeLeaderboard(raw: unknown): LeaderboardEntry[] {
+  const rows = Array.isArray(raw)
+    ? raw
+    : Array.isArray((raw as { leaderboard?: unknown })?.leaderboard)
+    ? (raw as { leaderboard: unknown[] }).leaderboard
+    : Array.isArray((raw as { leaders?: unknown })?.leaders)
+    ? (raw as { leaders: unknown[] }).leaders
+    : [];
+  return rows
+    .map((r) => ({
+      rank: Number((r as LeaderboardEntry).rank ?? 0),
+      name: String((r as LeaderboardEntry).name ?? ""),
+      sol: Number((r as LeaderboardEntry).sol ?? 0),
+      score: Number((r as LeaderboardEntry).score ?? 0),
+      pnl: Number((r as LeaderboardEntry).pnl ?? 0),
+      followers: Number((r as LeaderboardEntry).followers ?? 0),
+      tier: ((r as LeaderboardEntry).tier as Tier) || "survivor",
+      wallet: String((r as LeaderboardEntry).wallet ?? (r as { pubkey?: string }).pubkey ?? ""),
+    }))
+    .filter((r) => r.wallet && r.name);
+}
+
+async function fetchLeaderboard() {
+  const data = (await fetchJson<unknown>("/leaderboard")) || (await fetchJson<unknown>("/leaderboards"));
+  return normalizeLeaderboard(data || []);
+}
+
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 const fmt$ = (n: number | string, d = 2) =>
   "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -621,48 +508,55 @@ const fmtN = (n: number | string, d = 2) =>
 const fmtSol = (n: number | string) =>
   "◎" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 const shrt = (a: string | null | undefined) => (a ? a.slice(0, 5) + "..." + a.slice(-4) : "");
-const rng = (seed: string, lo: number, hi: number) => {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (Math.imul(31, h) + seed.charCodeAt(i)) | 0;
-  return lo + (Math.abs(h % 1000) / 1000) * (hi - lo);
-};
-const ri = (s: string, a: number, b: number) => Math.floor(rng(s, a, b + 1));
 
-function calcDegenScore(pk: string, sol: number, tokenCount: number, txCount: number) {
-  const ageFactor = Math.min(txCount * 0.5, 25);
-  const solFactor = Math.min(sol * 1.5, 25);
-  const tokenFactor = Math.min(tokenCount * 1.2, 25);
-  const actFactor = Math.min(ri(pk + "act", 5, 25), 25);
-  return Math.min(100, Math.floor(ageFactor + solFactor + tokenFactor + actFactor));
+function calcDegenScore(sol: number, tokenCount: number, txCount: number) {
+  const liquidity = Math.min(sol * 2, 40);
+  const activity = Math.min(txCount * 1.2, 40);
+  const diversity = Math.min(tokenCount * 1.4, 20);
+  return Math.min(100, Math.round(liquidity + activity + diversity));
 }
 
-function buildStats(pk: string, sol: number, tokens: ReadonlyArray<TokenAccount>, txs: ReadonlyArray<TransactionInfo>): Stats {
-  const score = calcDegenScore(pk, sol, tokens.length, txs.length);
-  const pnl = rng(pk + "pnl", -45, 320);
+function deriveTier(score: number): Tier {
+  return (score >= 90 ? "god" : score >= 75 ? "diamond" : score >= 55 ? "ape" : "survivor") as Tier;
+}
+
+function deriveTitle(score: number) {
+  return score >= 90
+    ? "Degen God"
+    : score >= 75
+    ? "Diamond Hands"
+    : score >= 55
+    ? "Seasoned Ape"
+    : score >= 35
+    ? "Rug Survivor"
+    : "Paper Hands";
+}
+
+function buildStats(
+  sol: number,
+  tokens: ReadonlyArray<TokenAccount>,
+  txs: ReadonlyArray<TransactionInfo>,
+  bagStats?: Partial<Stats>
+): Stats {
+  const score = bagStats?.score ?? calcDegenScore(sol, tokens.length, txs.length);
+  const tier = bagStats?.tier ?? deriveTier(score);
+  const txCount = bagStats?.txCount ?? txs.length;
+  const bags = bagStats?.bags ?? tokens.length;
   return {
     score,
-    pnl,
-    rugs: ri(pk + "r", 0, 18),
-    diamond: ri(pk + "dm", 10, 95),
-    calls: ri(pk + "c", 2, 60),
-    hitRate: ri(pk + "h", 10, 75),
-    hold: ri(pk + "ho", 1, 730),
-    bags: tokens.length || ri(pk + "bg", 1, 40),
-    followers: ri(pk + "fo", 100, 15000),
-    rank: ri(pk + "rk", 5, 3000),
-    txCount: txs.length,
-    title:
-      score >= 90
-        ? "Degen God"
-        : score >= 75
-        ? "Diamond Hands"
-        : score >= 55
-        ? "Seasoned Ape"
-        : score >= 35
-        ? "Rug Survivor"
-        : "Paper Hands",
-    tier: (score >= 90 ? "god" : score >= 75 ? "diamond" : score >= 55 ? "ape" : "survivor") as Tier,
-    isVIP: score >= 82,
+    pnl: bagStats?.pnl ?? 0,
+    rugs: bagStats?.rugs ?? 0,
+    diamond: bagStats?.diamond ?? 0,
+    calls: bagStats?.calls ?? 0,
+    hitRate: bagStats?.hitRate ?? 0,
+    hold: bagStats?.hold ?? 0,
+    bags,
+    followers: bagStats?.followers ?? 0,
+    rank: bagStats?.rank ?? 0,
+    txCount,
+    title: bagStats?.title ?? deriveTitle(score),
+    tier,
+    isVIP: bagStats?.isVIP ?? score >= 82,
   };
 }
 
@@ -788,11 +682,11 @@ function Modal({
           overflowY: "auto",
         }}
         onClick={(e) => e.stopPropagation()}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
             justifyContent: "space-between",
             padding: "20px 24px",
             borderBottom: `1px solid ${T.border}`,
@@ -1060,22 +954,7 @@ function Background() {
   );
 }
 
-// ─── LEADERBOARD DATA ────────────────────────────────────────────────────────
-const LB: Array<{ rank: number; name: string; sol: number; score: number; pnl: number; followers: number; tier: Tier; wallet: string }> = [
-  { rank: 1, name: "DegenGod.sol", sol: 18420, score: 99, pnl: 892, followers: 48200, tier: "god", wallet: "DgN7xK9mP2qR" },
-  { rank: 2, name: "DiamondFlip.sol", sol: 9810, score: 94, pnl: 541, followers: 32100, tier: "diamond", wallet: "DF2xP9mQ3rS" },
-  { rank: 3, name: "ApeKing.sol", sol: 7050, score: 88, pnl: 398, followers: 21800, tier: "ape", wallet: "AK3yQ8nR4sT" },
-  { rank: 4, name: "MoonBag.sol", sol: 5870, score: 81, pnl: 271, followers: 18400, tier: "god", wallet: "MB4zR7oS5tU" },
-  { rank: 5, name: "Wagmi.sol", sol: 4240, score: 77, pnl: 198, followers: 14300, tier: "diamond", wallet: "WG5aS6pT6uV" },
-  { rank: 6, name: "BagsKing.sol", sol: 3110, score: 71, pnl: 143, followers: 10200, tier: "ape", wallet: "BK6bT5qU7vW" },
-  { rank: 7, name: "OnChain.sol", sol: 2480, score: 65, pnl: 98, followers: 7800, tier: "ape", wallet: "OC7cU4rV8wX" },
-  { rank: 8, name: "AlphaApe.sol", sol: 1840, score: 59, pnl: 67, followers: 5400, tier: "survivor", wallet: "AA8dV3sW9xY" },
-  { rank: 9, name: "RugProof.sol", sol: 1200, score: 52, pnl: 44, followers: 3800, tier: "survivor", wallet: "RP9eW2tX0yZ" },
-  { rank: 10, name: "HoldStrong.sol", sol: 880, score: 47, pnl: 31, followers: 2600, tier: "survivor", wallet: "HS0fX1uY1zA" },
-];
-
 const TIER_C: Record<Tier, string> = { god: T.purple, diamond: "#0891b2", ape: T.green, survivor: T.gold };
-const TIER_BG: Record<Tier, string> = { god: T.purpleLight, diamond: "#cffafe", ape: T.greenLight, survivor: T.goldLight };
 
 const GOAL_OPTIONS: Goal[] = [
   { type: "portfolio", target: 10000, label: "$10k" },
@@ -1375,7 +1254,7 @@ export default function BagTracker() {
   const [checkedIn, setCheckedIn] = useState(false);
   const [goal, setGoal] = useState<Goal>({ type: "portfolio", target: 10000, label: "$10k" });
   const [wagers, setWagers] = useState<Wager[]>([]);
-  const [watching, setWatching] = useState<string[]>(["DegenGod.sol", "DiamondFlip.sol"]);
+  const [watching, setWatching] = useState<string[]>([]);
   const [tipping, setTipping] = useState<string | null>(null);
   const [tipped, setTipped] = useState<Record<string, boolean>>({});
   const [refCopied, setRefCopied] = useState(false);
@@ -1383,6 +1262,10 @@ export default function BagTracker() {
   const [wagerForm, setWagerForm] = useState<WagerForm>({ type: "followers", amount: 5, target: 1000 });
   const [lbFilter, setLbFilter] = useState<"all" | Tier>("all");
   const [solPrice, setSolPrice] = useState(SOL_PRICE_USD);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [bagsError, setBagsError] = useState<string | null>(null);
+  const [bagsProfileLoading, setBagsProfileLoading] = useState(false);
 
   const totalUsd = sol * solPrice;
   const goalPct =
@@ -1416,6 +1299,38 @@ export default function BagTracker() {
     document.head.appendChild(s);
   }, []);
 
+  // Live SOL price
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      const p = await fetchSolUsdPrice();
+      if (active && p) setSolPrice(p);
+    };
+    load();
+    const id = setInterval(load, 60000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  // Load leaderboard from bags.fm
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLeaderboardLoading(true);
+      const lb = await fetchLeaderboard();
+      if (cancelled) return;
+      setLeaderboard(lb);
+      setLeaderboardLoading(false);
+      if (!lb.length) setBagsError("Unable to load leaderboard from bags.fm");
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Phantom disconnect listener
   useEffect(() => {
     const p = window?.solana || window?.phantom?.solana;
@@ -1433,6 +1348,56 @@ export default function BagTracker() {
 
   const showToast = (msg: string, type: NonNullable<ToastState>["type"] = "success") => setToast({ msg, type });
 
+  const applyBagsProfile = (profile: BagsProfile | null | undefined) => {
+    if (!profile) return;
+    const watchList = (profile as { watchings?: string[] }).watchings || profile.watching;
+    if (Array.isArray(watchList)) setWatching(watchList);
+    if (Array.isArray(profile.wagers)) {
+      setWagers(
+        profile.wagers
+          .map((w, i) => ({
+            id: w.id || Date.now() + i,
+            amount: Number(w.amount || 0),
+            target: Number(w.target || 0),
+            type: (w.type as Wager["type"]) || "followers",
+            placed: (w.placed as ISODateString) || toISODateString(new Date()),
+            status: (w.status as Wager["status"]) || "active",
+            progress: Number(w.progress || 0),
+          }))
+          .filter((w) => !Number.isNaN(w.amount))
+      );
+    }
+    if (typeof profile.minted === "boolean") setMinted(profile.minted);
+  };
+
+  const loadPortfolio = useCallback(async (pk: PublicKeyString) => {
+    setBagsProfileLoading(true);
+    setBagsError(null);
+    try {
+      const [balR, tknsR, txListR, bagProfileR] = await Promise.allSettled([
+        getSolBalance(pk),
+        getTokenAccounts(pk),
+        getRecentTxs(pk),
+        fetchBagsProfile(pk),
+      ]);
+      const bal = balR.status === "fulfilled" ? balR.value : 0;
+      const tkns = tknsR.status === "fulfilled" ? tknsR.value : [];
+      const txList = txListR.status === "fulfilled" ? txListR.value : [];
+      const bagProfile = bagProfileR.status === "fulfilled" ? bagProfileR.value : null;
+      setSol(bal);
+      setTokens(tkns);
+      setTxs(txList);
+      const mergedStats = buildStats(bal, tkns, txList, bagProfile?.stats);
+      setStats(mergedStats);
+      applyBagsProfile(bagProfile || undefined);
+    } catch {
+      setBagsError("Unable to load bags.fm data");
+      setStats(buildStats(0, [], []));
+    } finally {
+      setBagsProfileLoading(false);
+    }
+  }, []);
+
   // Connect wallet
   const connect = useCallback(async () => {
     const p = window?.solana || window?.phantom?.solana;
@@ -1445,15 +1410,7 @@ export default function BagTracker() {
       const resp = await p.connect();
       const pk = toPublicKeyString(resp.publicKey.toString());
       setWallet({ publicKey: pk });
-      const [bal, tkns, txList] = await Promise.all([
-        getSolBalance(pk),
-        getTokenAccounts(pk),
-        getRecentTxs(pk),
-      ]);
-      setSol(bal);
-      setTokens(tkns);
-      setTxs(txList);
-      setStats(buildStats(pk, bal, tkns, txList));
+      await loadPortfolio(pk);
       showToast("Wallet connected — Solana Mainnet");
     } catch (e: unknown) {
       const code = isPhantomError(e) ? e.code : undefined;
@@ -1461,7 +1418,7 @@ export default function BagTracker() {
     } finally {
       setConnecting(false);
     }
-  }, []);
+  }, [loadPortfolio]);
 
   // Disconnect
   const disconnect = () => {
@@ -1471,6 +1428,10 @@ export default function BagTracker() {
     setTokens([]);
     setTxs([]);
     setStats(null);
+    setMinted(false);
+    setWagers([]);
+    setWatching([]);
+    setBagsError(null);
     showToast("Wallet disconnected");
   };
 
@@ -1479,15 +1440,7 @@ export default function BagTracker() {
     if (!wallet || refreshing) return;
     setRefreshing(true);
     try {
-      const [bal, tkns, txList] = await Promise.all([
-        getSolBalance(wallet.publicKey),
-        getTokenAccounts(wallet.publicKey),
-        getRecentTxs(wallet.publicKey),
-      ]);
-      setSol(bal);
-      setTokens(tkns);
-      setTxs(txList);
-      setStats(buildStats(wallet.publicKey, bal, tkns, txList));
+      await loadPortfolio(wallet.publicKey);
       showToast("Portfolio refreshed");
     } finally {
       setRefreshing(false);
@@ -1504,12 +1457,25 @@ export default function BagTracker() {
   };
 
   const confirmMint = async () => {
+    if (!wallet) {
+      showToast("Connect wallet first", "warning");
+      return;
+    }
     setModal(null);
     setMinting(true);
-    await new Promise((r) => setTimeout(r, 2400));
-    setMinted(true);
-    setMinting(false);
-    showToast("Degen Card minted as NFT on Solana");
+    try {
+      const res = await fetchJson<{ signature?: string; minted?: boolean }>("/mint", {
+        method: "POST",
+        body: JSON.stringify({ wallet: wallet.publicKey }),
+      });
+      if (res?.signature) await waitForConfirmation(res.signature);
+      setMinted(Boolean(res?.minted ?? res?.signature));
+      showToast("Degen Card mint confirmed on-chain");
+    } catch {
+      showToast("Mint failed — check your wallet approval", "error");
+    } finally {
+      setMinting(false);
+    }
   };
 
   // Tip
@@ -1524,10 +1490,19 @@ export default function BagTracker() {
   const confirmTip = async (name: string) => {
     setModal(null);
     setTipping(name);
-    await new Promise((r) => setTimeout(r, 1600));
-    setTipping(null);
-    setTipped((p) => ({ ...p, [name]: true }));
-    showToast(`Tipped 0.1 SOL to ${name}`);
+    try {
+      const res = await fetchJson<{ signature?: string }>("/tips", {
+        method: "POST",
+        body: JSON.stringify({ from: wallet?.publicKey, to: name, amount: 0.1 }),
+      });
+      if (res?.signature) await waitForConfirmation(res.signature);
+      setTipped((p) => ({ ...p, [name]: true }));
+      showToast(`Tip submitted on-chain to ${name}`);
+    } catch {
+      showToast("Tip failed — please retry", "error");
+    } finally {
+      setTipping(null);
+    }
   };
 
   // Check in
@@ -1549,17 +1524,35 @@ export default function BagTracker() {
 
   const confirmWager = (form: WagerForm) => {
     setModal(null);
-    setWagers((w) => [
-      ...w,
-      {
-        ...form,
-        id: Date.now(),
-        placed: toISODateString(new Date()),
-        status: "active",
-        progress: ri(wallet?.publicKey + "wp" || "x", 12, 68),
-      },
-    ]);
-    showToast(`Wager placed — ${form.amount} SOL staked`);
+    if (!wallet) {
+      showToast("Connect wallet first", "warning");
+      return;
+    }
+    const submit = async () => {
+      try {
+        const res = await fetchJson<{ signature?: string; wager?: Partial<Wager> }>("/wagers", {
+          method: "POST",
+          body: JSON.stringify({ wallet: wallet.publicKey, ...form }),
+        });
+        if (res?.signature) await waitForConfirmation(res.signature);
+        if (res?.wager) {
+          setWagers((w) => [
+            ...w,
+            {
+              ...form,
+              id: res.wager.id || Date.now(),
+              placed: (res.wager.placed as ISODateString) || toISODateString(new Date()),
+              status: (res.wager.status as Wager["status"]) || "active",
+              progress: Number(res.wager.progress || 0),
+            },
+          ]);
+        }
+        showToast(`Wager placed — ${form.amount} SOL staked`);
+      } catch {
+        showToast("Unable to place wager — try again", "error");
+      }
+    };
+    submit();
   };
 
   // Cancel wager
@@ -1941,7 +1934,7 @@ export default function BagTracker() {
             <span style={{ fontSize: 11, color: T.textMute }}>{watching.length} tracked</span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10 }}>
-            {LB.slice(0, 6).map((w) => (
+            {leaderboard.slice(0, 6).map((w) => (
               <div
                 key={w.name}
                 style={{
@@ -1981,8 +1974,19 @@ export default function BagTracker() {
                 >
                   {watching.includes(w.name) ? "Unwatch" : "Watch"}
                 </Btn>
+                <Btn size="sm" variant="ghost" onClick={() => doTip(w.name)} disabled={!!tipped[w.name]}>
+                  {tipped[w.name] ? "Tipped" : "Tip"}
+                </Btn>
               </div>
             ))}
+            {!leaderboardLoading && !leaderboard.length && (
+              <div style={{ color: T.textMute, fontSize: 13, padding: "4px 0" }}>
+                No whale data yet. Bags.fm leaderboard will appear once loaded.
+              </div>
+            )}
+            {leaderboardLoading && (
+              <div style={{ color: T.textMute, fontSize: 13, padding: "4px 0" }}>Loading whales from bags.fm…</div>
+            )}
           </div>
         </Card>
       </div>
@@ -2068,30 +2072,38 @@ export default function BagTracker() {
               </tr>
             </thead>
             <tbody>
-              {LB.filter((x) => lbFilter === "all" || x.tier === lbFilter).map((w) => (
-                <tr key={w.wallet} style={{ borderTop: `1px solid ${T.border}` }}>
-                  <td style={{ padding: "12px 8px", fontWeight: 700, fontFamily: T.mono }}>#{w.rank}</td>
-                  <td style={{ padding: "12px 8px", fontWeight: 700, color: T.text }}>{w.name}</td>
-                  <td style={{ padding: "12px 8px", color: T.textSec }}>{fmtSol(w.sol)}</td>
-                  <td style={{ padding: "12px 8px", color: TIER_C[w.tier] }}>{w.score}</td>
-                  <td style={{ padding: "12px 8px", color: w.pnl >= 0 ? T.green : T.red }}>
-                    {w.pnl >= 0 ? "+" : ""}
-                    {w.pnl}%
-                  </td>
-                  <td style={{ padding: "12px 8px", color: T.textSec }}>{fmtN(w.followers, 0)}</td>
-                  <td style={{ padding: "12px 8px" }}>
-                    <Btn
-                      size="sm"
-                      variant={watching.includes(w.name) ? "secondary" : "primary"}
-                      onClick={() => toggleWatch(w.name)}
-                    >
-                      {watching.includes(w.name) ? "Unwatch" : "Watch"}
-                    </Btn>
-                  </td>
-                </tr>
-              ))}
+               {leaderboard
+                .filter((x) => lbFilter === "all" || x.tier === lbFilter)
+                .map((w) => (
+                  <tr key={w.wallet} style={{ borderTop: `1px solid ${T.border}` }}>
+                    <td style={{ padding: "12px 8px", fontWeight: 700, fontFamily: T.mono }}>#{w.rank}</td>
+                    <td style={{ padding: "12px 8px", fontWeight: 700, color: T.text }}>{w.name}</td>
+                    <td style={{ padding: "12px 8px", color: T.textSec }}>{fmtSol(w.sol)}</td>
+                    <td style={{ padding: "12px 8px", color: TIER_C[w.tier] }}>{w.score}</td>
+                    <td style={{ padding: "12px 8px", color: w.pnl >= 0 ? T.green : T.red }}>
+                      {w.pnl >= 0 ? "+" : ""}
+                      {w.pnl}%
+                    </td>
+                    <td style={{ padding: "12px 8px", color: T.textSec }}>{fmtN(w.followers, 0)}</td>
+                    <td style={{ padding: "12px 8px" }}>
+                      <Btn
+                        size="sm"
+                        variant={watching.includes(w.name) ? "secondary" : "primary"}
+                        onClick={() => toggleWatch(w.name)}
+                      >
+                        {watching.includes(w.name) ? "Unwatch" : "Watch"}
+                      </Btn>
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
+          {!leaderboardLoading && !leaderboard.length && (
+            <div style={{ padding: "12px 8px", color: T.textMute, fontSize: 13 }}>No leaderboard data yet.</div>
+          )}
+          {leaderboardLoading && (
+            <div style={{ padding: "12px 8px", color: T.textMute, fontSize: 13 }}>Loading leaderboard…</div>
+          )}
         </div>
       </Card>
     </div>
@@ -2471,6 +2483,23 @@ export default function BagTracker() {
             </div>
           </div>
 
+          {wallet && (bagsProfileLoading || bagsError) && (
+            <div
+              style={{
+                marginBottom: 12,
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: `1px solid ${bagsError ? T.red : T.border}`,
+                background: bagsError ? T.redLight : T.surfaceAlt,
+                color: bagsError ? T.red : T.textSec,
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              {bagsError ? bagsError : "Syncing live data from bags.fm and Solana…"}
+            </div>
+          )}
+
           {renderPage()}
         </main>
       </div>
@@ -2497,7 +2526,8 @@ export default function BagTracker() {
       {modal?.type === "confirmMint" && (
         <Modal title="Mint Degen Card as NFT" onClose={() => setModal(null)}>
           <p style={{ color: T.textSec, fontSize: 14, lineHeight: 1.6, marginBottom: 16 }}>
-            This will mint your current Degen Card to Solana mainnet (demo flow). A small network fee applies.
+            This will mint your current Degen Card to Solana mainnet via bags.fm. Please approve the transaction in your
+            wallet.
           </p>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <Btn variant="ghost" onClick={() => setModal(null)}>
@@ -2513,7 +2543,7 @@ export default function BagTracker() {
       {modal?.type === "confirmTip" && (
         <Modal title="Send tip" onClose={() => setModal(null)}>
           <p style={{ color: T.textSec, fontSize: 14, lineHeight: 1.6, marginBottom: 16 }}>
-            Tip 0.1 ◎ to {modal.data.name}. This is a simulated flow for demo purposes.
+            Tip 0.1 ◎ to {modal.data.name}. We submit a signed transaction so the transfer is verifiable on-chain.
           </p>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <Btn variant="ghost" onClick={() => setModal(null)}>
@@ -2529,8 +2559,8 @@ export default function BagTracker() {
       {modal?.type === "confirmWager" && (
         <Modal title="Confirm wager" onClose={() => setModal(null)}>
           <p style={{ color: T.textSec, fontSize: 14, lineHeight: 1.6, marginBottom: 16 }}>
-            Stake {wagerForm.amount} ◎ on reaching {wagerForm.target} {wagerForm.type}. This is simulated for demo
-            purposes.
+            Stake {wagerForm.amount} ◎ on reaching {wagerForm.target} {wagerForm.type}. We submit the wager to bags.fm
+            so it can be settled on-chain.
           </p>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <Btn variant="ghost" onClick={() => setModal(null)}>
