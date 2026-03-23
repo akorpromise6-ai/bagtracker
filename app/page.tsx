@@ -2,13 +2,36 @@
 
 import { useState, useEffect, useCallback, useRef, type ReactElement, type ReactNode, type CSSProperties } from "react";
 
-type WalletInfo = { publicKey: string };
-type TokenAccount = Record<string, unknown>;
-type TransactionInfo = Record<string, unknown>;
+type PublicKeyString = string & { __brand: "PublicKey" };
+type WalletInfo = { publicKey: PublicKeyString };
+type TokenAmount = { amount: string; decimals: number; uiAmount: number | null; uiAmountString: string };
+type TokenAccount = {
+  pubkey: string;
+  account: {
+    data: {
+      parsed: {
+        info: {
+          mint: string;
+          owner: string;
+          tokenAmount: TokenAmount;
+        };
+      };
+    };
+  };
+};
+type ISODateString = string & { __brand: "ISODateString" };
+type TransactionInfo = {
+  signature: string;
+  slot: number;
+  blockTime?: number | null;
+  err?: Record<string, unknown> | null;
+  memo?: string | null;
+  confirmationStatus?: string;
+};
 type Tier = "god" | "diamond" | "ape" | "survivor";
 type Goal = { type: "portfolio" | "followers"; target: number; label: string };
 type WagerForm = { type: "followers" | "pnl" | "rank"; target: number; amount: number };
-type Wager = WagerForm & { id: number; placed: string; status: "active" | "settled"; progress: number };
+type Wager = WagerForm & { id: number; placed: ISODateString; status: "active" | "settled"; progress: number };
 type Stats = {
   score: number;
   pnl: number;
@@ -33,6 +56,7 @@ type ModalState =
   | { type: "confirmWager"; data: WagerForm }
   | null;
 
+type PhantomError = { code: number };
 type PhantomProvider = {
   isPhantom?: boolean;
   connect?: () => Promise<{ publicKey: { toString: () => string } }>;
@@ -47,6 +71,18 @@ declare global {
     phantom?: { solana?: PhantomProvider };
   }
 }
+
+const toPublicKeyString = (value: string): PublicKeyString => {
+  const base58 = /^[1-9A-HJ-NP-Za-km-z]+$/;
+  if (!value || value.length < 32 || value.length > 44 || !base58.test(value)) {
+    throw new Error(
+      `Invalid public key '${value}': expected base58 string for a 32-byte key (typically 43-44 characters)`
+    );
+  }
+  return value as PublicKeyString;
+};
+
+const toISODateString = (date: Date): ISODateString => date.toISOString() as ISODateString;
 
 // ─── FONT LOADER ────────────────────────────────────────────────────────────
 const FONT_URL =
@@ -630,8 +666,9 @@ function buildStats(pk: string, sol: number, tokens: ReadonlyArray<TokenAccount>
   };
 }
 
-function isPhantomError(e: unknown): e is { code: number } {
-  return typeof e === "object" && e !== null && "code" in e && typeof (e as { code?: unknown }).code === "number";
+function isPhantomError(e: unknown): e is PhantomError {
+  if (typeof e !== "object" || e === null || !("code" in e)) return false;
+  return typeof (e as { code: unknown }).code === "number";
 }
 
 // ─── ANIMATED NUMBER ─────────────────────────────────────────────────────────
@@ -1313,7 +1350,7 @@ const NAV: Array<{ id: string; icon: IconName; label: string; badge?: string }> 
 // ════════════════════════════════════════════════════════════════════════════
 export default function BagTracker() {
   // Wallet state
-  const [wallet, setWallet] = useState<WalletInfo>(null);
+  const [wallet, setWallet] = useState<WalletInfo | null>(null);
   const [sol, setSol] = useState(0);
   const [tokens, setTokens] = useState<TokenAccount[]>([]);
   const [txs, setTxs] = useState<TransactionInfo[]>([]);
@@ -1406,7 +1443,7 @@ export default function BagTracker() {
     setConnecting(true);
     try {
       const resp = await p.connect();
-      const pk = resp.publicKey.toString();
+      const pk = toPublicKeyString(resp.publicKey.toString());
       setWallet({ publicKey: pk });
       const [bal, tkns, txList] = await Promise.all([
         getSolBalance(pk),
@@ -1517,7 +1554,7 @@ export default function BagTracker() {
       {
         ...form,
         id: Date.now(),
-        placed: new Date().toLocaleDateString(),
+        placed: toISODateString(new Date()),
         status: "active",
         progress: ri(wallet?.publicKey + "wp" || "x", 12, 68),
       },
@@ -2073,7 +2110,7 @@ export default function BagTracker() {
             <Label>Type</Label>
             <select
               value={wagerForm.type}
-              onChange={(e) => setWagerForm((f) => ({ ...f, type: e.target.value }))}
+              onChange={(e) => setWagerForm((f) => ({ ...f, type: e.target.value as WagerForm["type"] }))}
               style={{
                 width: "100%",
                 padding: "10px 12px",
