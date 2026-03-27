@@ -147,6 +147,7 @@ const REF_EARNING_PER_REF = 0.05;
 const CHECKIN_POINTS_KEY = "bagtracker:checkin-points";
 const CHECKIN_LAST_KEY = "bagtracker:last-checkin";
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const CHECKIN_BUFFER_MS = 250;
 
 // ─── DESIGN TOKENS ──────────────────────────────────────────────────────────
 const T = {
@@ -799,6 +800,11 @@ function activityColor(change: number | null | undefined) {
   if (change === 0) return T.text;
   return change > 0 ? T.green : T.red;
 }
+
+const hasNonZeroSolChange = (tx: TransactionInfo) => {
+  const change = tx.solChange ?? null;
+  return change !== null && !Number.isNaN(change) && change !== 0;
+};
 
 // ─── ANIMATED NUMBER ─────────────────────────────────────────────────────────
 function AnimNum({
@@ -1526,9 +1532,7 @@ export default function BagTracker() {
   const SIDEBAR_W = sideOpen ? 236 : 68;
   const checkInFilled = Math.min(checkInPoints, 7);
   const checkInSubtitle = checkedIn ? formatCheckInCountdown(lastCheckIn) : "Earn 1 point every 24h";
-  const txsWithChange = txs.filter(
-    (t) => t.solChange !== null && t.solChange !== undefined && !Number.isNaN(t.solChange) && t.solChange !== 0
-  );
+  const txsWithChange = txs.filter(hasNonZeroSolChange);
   const txsForDisplay = (txsWithChange.length ? txsWithChange : txs).slice(0, TX_DISPLAY_LIMIT);
 
   // Responsive
@@ -1567,7 +1571,7 @@ export default function BagTracker() {
       setCheckedIn(false);
       return;
     }
-    const id = setTimeout(() => setCheckedIn(hasCheckedInWithin24h(lastCheckIn)), remaining + 250);
+    const id = setTimeout(() => setCheckedIn(hasCheckedInWithin24h(lastCheckIn)), remaining + CHECKIN_BUFFER_MS);
     return () => clearTimeout(id);
   }, [lastCheckIn]);
 
@@ -2310,7 +2314,7 @@ export default function BagTracker() {
               <Ico n="activity" s={16} c={T.green} />
               <span style={{ fontWeight: 700, fontSize: 14, color: T.text }}>Recent On-Chain Activity</span>
               <span style={{ marginLeft: "auto", fontSize: 10, fontFamily: T.mono, color: T.textMute }}>
-                {HELIUS_API_KEY ? "via Helius RPC" : "via Solana RPC"} · Last 10 buys
+                {HELIUS_API_KEY ? "via Helius RPC" : "via Solana RPC"} · Last 10 SOL changes
               </span>
             </div>
             <div style={{ fontSize: 11, color: T.textMute, fontFamily: T.mono, marginBottom: 8 }}>
