@@ -147,7 +147,6 @@ const REF_EARNING_PER_REF = 0.05;
 const CHECKIN_POINTS_KEY = "bagtracker:checkin-points";
 const CHECKIN_LAST_KEY = "bagtracker:last-checkin";
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const CHECKIN_BUFFER_MS = 250;
 
 // ─── DESIGN TOKENS ──────────────────────────────────────────────────────────
 const T = {
@@ -1533,7 +1532,12 @@ export default function BagTracker() {
   const checkInFilled = Math.min(checkInPoints, 7);
   const checkInSubtitle = checkedIn ? formatCheckInCountdown(lastCheckIn) : "Earn 1 point every 24h";
   const txsWithChange = txs.filter(hasNonZeroSolChange);
-  const txsLabel = txsWithChange.length ? "Last 10 SOL changes" : "Last 10 transactions";
+  const txsDisplayCount = txsWithChange.length
+    ? Math.min(txsWithChange.length, TX_DISPLAY_LIMIT)
+    : Math.min(txs.length, TX_DISPLAY_LIMIT);
+  const txsLabel = txsWithChange.length
+    ? `Last ${txsDisplayCount} SOL change${txsDisplayCount === 1 ? "" : "s"}`
+    : `Last ${txsDisplayCount} transaction${txsDisplayCount === 1 ? "" : "s"}`;
   const txsForDisplay = (txsWithChange.length ? txsWithChange : txs).slice(0, TX_DISPLAY_LIMIT);
 
   // Responsive
@@ -1553,7 +1557,7 @@ export default function BagTracker() {
     if (typeof window === "undefined") return;
     const storedPointsRaw = localStorage.getItem(CHECKIN_POINTS_KEY);
     const storedPoints = Number(storedPointsRaw);
-    setCheckInPoints(Number.isFinite(storedPoints) ? Math.max(0, Math.floor(storedPoints)) : 0);
+    setCheckInPoints(Number.isFinite(storedPoints) ? Math.max(0, storedPoints) : 0);
     const storedLastRaw = localStorage.getItem(CHECKIN_LAST_KEY);
     const parsedLast = storedLastRaw ? Number(storedLastRaw) : null;
     const validLast = parsedLast !== null && Number.isFinite(parsedLast) ? parsedLast : null;
@@ -1572,7 +1576,7 @@ export default function BagTracker() {
       setCheckedIn(false);
       return;
     }
-    const id = setTimeout(() => setCheckedIn(false), remaining + CHECKIN_BUFFER_MS);
+    const id = setTimeout(() => setCheckedIn(false), remaining);
     return () => clearTimeout(id);
   }, [lastCheckIn]);
 
@@ -1864,7 +1868,7 @@ export default function BagTracker() {
 
   // Check in
   const doCheckIn = () => {
-    if (checkedIn && hasCheckedInWithin24h(lastCheckIn)) {
+    if (hasCheckedInWithin24h(lastCheckIn)) {
       showToast("Already checked in. Come back after 24 hours.", "warning");
       return;
     }
