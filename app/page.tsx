@@ -630,7 +630,7 @@ async function fetchLeaderboard() {
 // ─── REFERRAL STORAGE ───────────────────────────────────────────────────────
 const EMPTY_REFERRAL_STATS: ReferralStats = { refs: 0, converted: 0, sol: 0 };
 
-function normalizeReferralStats(raw?: Partial<ReferralStats> | null): ReferralStats {
+function normalizeReferralStatsWithDefaults(raw?: Partial<ReferralStats> | null): ReferralStats {
   return {
     refs: Number(raw?.refs ?? 0) || 0,
     converted: Number(raw?.converted ?? 0) || 0,
@@ -698,7 +698,7 @@ function persistLocalReferral(referrer: string, referred: string): ReferralStats
 async function fetchReferralStats(referrer: string): Promise<ReferralStats | null> {
   if (!isValidPublicKeyString(referrer)) return null;
   const data = await fetchJson<Partial<ReferralStats>>(`/referrals?wallet=${encodeURIComponent(referrer)}`);
-  if (data) return normalizeReferralStats(data);
+  if (data) return normalizeReferralStatsWithDefaults(data);
   console.warn("[bagtracker] referral stats unavailable", referrer);
   return null;
 }
@@ -1506,6 +1506,19 @@ export default function BagTracker() {
   const [bagsError, setBagsError] = useState<string | null>(null);
   const [bagsProfileLoading, setBagsProfileLoading] = useState(false);
 
+  const readRefFromUrl = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const storedRef = localStorage.getItem(PENDING_REF_KEY);
+    const urlRef = new URLSearchParams(window.location.search).get("ref");
+    const ref = urlRef || storedRef;
+    if (ref && isValidPublicKeyString(ref)) {
+      setPendingReferrer(ref);
+      localStorage.setItem(PENDING_REF_KEY, ref);
+    } else if (storedRef) {
+      localStorage.removeItem(PENDING_REF_KEY);
+    }
+  }, []);
+
   const totalUsd = sol * solPrice;
   const goalPct =
     goal.type === "portfolio"
@@ -1528,25 +1541,14 @@ export default function BagTracker() {
   // Capture referral parameter from URL or previous session
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const readRef = () => {
-      const storedRef = localStorage.getItem(PENDING_REF_KEY);
-      const urlRef = new URLSearchParams(window.location.search).get("ref");
-      const ref = urlRef || storedRef;
-      if (ref && isValidPublicKeyString(ref)) {
-        setPendingReferrer(ref);
-        localStorage.setItem(PENDING_REF_KEY, ref);
-      } else if (storedRef) {
-        localStorage.removeItem(PENDING_REF_KEY);
-      }
-    };
-    readRef();
-    window.addEventListener("popstate", readRef);
-    window.addEventListener("hashchange", readRef);
+    readRefFromUrl();
+    window.addEventListener("popstate", readRefFromUrl);
+    window.addEventListener("hashchange", readRefFromUrl);
     return () => {
-      window.removeEventListener("popstate", readRef);
-      window.removeEventListener("hashchange", readRef);
+      window.removeEventListener("popstate", readRefFromUrl);
+      window.removeEventListener("hashchange", readRefFromUrl);
     };
-  }, []);
+  }, [readRefFromUrl]);
 
   // Load fonts + global styles
   useEffect(() => {
@@ -1732,8 +1734,8 @@ export default function BagTracker() {
       let recordedLocally = false;
       let recordedRemotely = false;
       try {
-        persistLocalReferral(referrer, referred);
-        recordedLocally = true;
+        const localStats = persistLocalReferral(referrer, referred);
+        recordedLocally = localStats.refs >= 0;
         recordedRemotely = await recordRemoteReferral(referrer, referred);
       } catch (err) {
         console.error("[bagtracker] referral capture failed", err);
@@ -1743,7 +1745,7 @@ export default function BagTracker() {
             ? { msg: "Referral recorded — thanks for using a friend's link!", type: "success" }
             : recordedLocally
             ? { msg: "Referral captured locally — syncing may take a moment.", type: "warning" }
-            : { msg: "Unable to record referral. Please reconnect to try again.", type: "error" }
+            : { msg: "Unable to record referral. Please try again later.", type: "error" }
         );
         setPendingReferrer(null);
         if (typeof window !== "undefined") localStorage.removeItem(PENDING_REF_KEY);
