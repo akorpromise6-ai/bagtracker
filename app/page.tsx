@@ -1533,6 +1533,7 @@ export default function BagTracker() {
   const checkInFilled = Math.min(checkInPoints, 7);
   const checkInSubtitle = checkedIn ? formatCheckInCountdown(lastCheckIn) : "Earn 1 point every 24h";
   const txsWithChange = txs.filter(hasNonZeroSolChange);
+  const txsLabel = txsWithChange.length ? "Last 10 SOL changes" : "Last 10 transactions";
   const txsForDisplay = (txsWithChange.length ? txsWithChange : txs).slice(0, TX_DISPLAY_LIMIT);
 
   // Responsive
@@ -1571,7 +1572,7 @@ export default function BagTracker() {
       setCheckedIn(false);
       return;
     }
-    const id = setTimeout(() => setCheckedIn(hasCheckedInWithin24h(lastCheckIn)), remaining + CHECKIN_BUFFER_MS);
+    const id = setTimeout(() => setCheckedIn(false), remaining + CHECKIN_BUFFER_MS);
     return () => clearTimeout(id);
   }, [lastCheckIn]);
 
@@ -2314,12 +2315,17 @@ export default function BagTracker() {
               <Ico n="activity" s={16} c={T.green} />
               <span style={{ fontWeight: 700, fontSize: 14, color: T.text }}>Recent On-Chain Activity</span>
               <span style={{ marginLeft: "auto", fontSize: 10, fontFamily: T.mono, color: T.textMute }}>
-                {HELIUS_API_KEY ? "via Helius RPC" : "via Solana RPC"} · Last 10 SOL changes
+                {HELIUS_API_KEY ? "via Helius RPC" : "via Solana RPC"} · {txsLabel}
               </span>
             </div>
             <div style={{ fontSize: 11, color: T.textMute, fontFamily: T.mono, marginBottom: 8 }}>
               Wallet balance: {fmtSol(sol)}
             </div>
+            {txsWithChange.length === 0 && txs.length > 0 && (
+              <div style={{ fontSize: 11, color: T.textMute, marginBottom: 6 }}>
+                No SOL deltas detected — showing recent transactions instead.
+              </div>
+            )}
             {txsForDisplay.length === 0 ? (
               <div style={{ color: T.textMute, fontSize: 13 }}>No transactions found for this wallet yet.</div>
             ) : (
