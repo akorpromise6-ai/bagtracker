@@ -126,6 +126,8 @@ const HELIUS_RPC_URL = HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key
 const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || HELIUS_RPC_URL || "https://api.mainnet-beta.solana.com";
 const BAGS_API = (process.env.NEXT_PUBLIC_BAGS_API || "https://api.bags.fm").replace(/\/$/, "");
 const BAGS_API_KEY = process.env.NEXT_PUBLIC_BAGS_API_KEY;
+const TX_FETCH_LIMIT = 20;
+const TX_DISPLAY_LIMIT = 8;
 
 // ─── DESIGN TOKENS ──────────────────────────────────────────────────────────
 const T = {
@@ -452,7 +454,7 @@ function calcSolChangeForWallet(tx: { nativeTransfers?: NativeTransfer[] }, wall
     if (nt.fromUserAccount === wallet) return acc - amount;
     return acc;
   }, 0);
-  return lamports ? lamports / 1e9 : null;
+  return lamports / 1e9;
 }
 
 function normalizeTx(raw: unknown, wallet: string): TransactionInfo | null {
@@ -465,10 +467,10 @@ function normalizeTx(raw: unknown, wallet: string): TransactionInfo | null {
   const blockTime = typeof r.blockTime === "number" ? r.blockTime : null;
   const timestamp = typeof r.timestamp === "number" ? r.timestamp : blockTime;
   const nativeTransfers = Array.isArray((r as { nativeTransfers?: unknown }).nativeTransfers)
-    ? ((r as { nativeTransfers: NativeTransfer[] }).nativeTransfers || [])
+    ? (r as { nativeTransfers: NativeTransfer[] }).nativeTransfers
     : [];
   const tokenTransfers = Array.isArray((r as { tokenTransfers?: unknown }).tokenTransfers)
-    ? ((r as { tokenTransfers: TokenTransfer[] }).tokenTransfers || [])
+    ? (r as { tokenTransfers: TokenTransfer[] }).tokenTransfers
     : [];
   return {
     signature: sig,
@@ -490,9 +492,9 @@ function normalizeTx(raw: unknown, wallet: string): TransactionInfo | null {
 async function fetchHeliusTxs(pk: string) {
   if (!HELIUS_API_KEY) return null;
   try {
-    const res = await fetch(
-      `https://api.helius.xyz/v0/addresses/${pk}/transactions?api-key=${HELIUS_API_KEY}&limit=20`
-    );
+    const res = await fetch(`https://api.helius.xyz/v0/addresses/${pk}/transactions?limit=${TX_FETCH_LIMIT}`, {
+      headers: { Authorization: `Bearer ${HELIUS_API_KEY}` },
+    });
     if (!res.ok) return null;
     const data = await res.json();
     if (!Array.isArray(data)) return null;
@@ -506,7 +508,7 @@ async function getRecentTxs(pk: string) {
   const helius = await fetchHeliusTxs(pk);
   if (helius?.length) return helius;
 
-  const r = await rpc("getSignaturesForAddress", [pk, { limit: 20 }]);
+  const r = await rpc("getSignaturesForAddress", [pk, { limit: TX_FETCH_LIMIT }]);
   const rows = Array.isArray(r) ? r : [];
   return rows.map((t) => normalizeTx(t, pk)).filter(Boolean) as TransactionInfo[];
 }
@@ -515,7 +517,7 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T | null>
   try {
     const headers = {
       "Content-Type": "application/json",
-      ...(BAGS_API_KEY ? { Authorization: `Bearer ${BAGS_API_KEY}`, "x-api-key": BAGS_API_KEY } : {}),
+      ...(BAGS_API_KEY ? { Authorization: `Bearer ${BAGS_API_KEY}` } : {}),
       ...(init?.headers || {}),
     };
     const res = await fetch(`${BAGS_API}${path.startsWith("/") ? path : `/${path}`}`, {
@@ -571,6 +573,7 @@ async function fetchSolUsdPrice() {
   const cg = await fetchCoingeckoPrice();
   if (cg) return cg;
 
+  console.warn("[bagtracker] Falling back to static SOL price");
   return SOL_PRICE_USD;
 }
 
@@ -678,7 +681,7 @@ function formatAgo(ts?: number | null) {
   if (!ts) return "—";
   const ms = ts < 1e12 ? ts * 1000 : ts;
   const diff = Date.now() - ms;
-  if (diff < 0) return "now";
+  if (diff < 0) return "in future";
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
@@ -689,9 +692,15 @@ function formatAgo(ts?: number | null) {
 }
 
 function formatSolDelta(v?: number | null) {
-  if (!v) return "—";
+  if (v == null || Number.isNaN(v)) return "—";
   const sign = v > 0 ? "+" : "";
   return `${sign}${v.toFixed(3)} ◎`;
+}
+
+function activityColor(change: number | null | undefined) {
+  if (change == null) return T.text;
+  if (change === 0) return T.text;
+  return change > 0 ? T.green : T.red;
 }
 
 // ─── ANIMATED NUMBER ─────────────────────────────────────────────────────────
@@ -2059,10 +2068,10 @@ export default function BagTracker() {
             <div style={{ color: T.textMute, fontSize: 13 }}>No transactions found for this wallet yet.</div>
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
-              {txs.slice(0, 8).map((t) => {
+              {txs.slice(0, TX_DISPLAY_LIMIT).map((t) => {
                 const when = t.timestamp ?? t.blockTime ?? null;
                 const change = t.solChange ?? null;
-                const color = change && change !== 0 ? (change > 0 ? T.green : T.red) : T.text;
+                const color = activityColor(change);
                 const label = t.description || t.type || t.source || "Transaction";
                 return (
                   <div
