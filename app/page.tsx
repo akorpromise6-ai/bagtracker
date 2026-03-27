@@ -148,6 +148,7 @@ const CHECKIN_POINTS_KEY = "bagtracker:checkin-points";
 const CHECKIN_LAST_KEY = "bagtracker:last-checkin";
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const CHECKIN_DISPLAY_MAX = 7;
+const CHECKIN_POINTS_MAX = 365;
 
 // ─── DESIGN TOKENS ──────────────────────────────────────────────────────────
 const T = {
@@ -1561,7 +1562,9 @@ export default function BagTracker() {
     const storedPointsRaw = localStorage.getItem(CHECKIN_POINTS_KEY);
     const storedPoints = Number(storedPointsRaw);
     // Defensive clamp in case localStorage is manually altered
-    setCheckInPoints(Number.isFinite(storedPoints) ? Math.max(0, storedPoints) : 0);
+    setCheckInPoints(
+      Number.isFinite(storedPoints) ? Math.min(CHECKIN_POINTS_MAX, Math.max(0, storedPoints)) : 0
+    );
     const storedLastRaw = localStorage.getItem(CHECKIN_LAST_KEY);
     const parsedLast = storedLastRaw ? Number(storedLastRaw) : null;
     const validLast = parsedLast !== null && Number.isFinite(parsedLast) ? parsedLast : null;
@@ -1575,11 +1578,10 @@ export default function BagTracker() {
       setCheckedIn(false);
       return;
     }
-    const remaining = lastCheckIn + ONE_DAY_MS - Date.now();
-    if (remaining <= 0) {
-      setCheckedIn(false);
-      return;
-    }
+    const withinWindow = hasCheckedInWithin24h(lastCheckIn);
+    setCheckedIn(withinWindow);
+    if (!withinWindow) return;
+    const remaining = Math.max(0, lastCheckIn + ONE_DAY_MS - Date.now());
     const id = setTimeout(() => setCheckedIn(false), remaining);
     return () => clearTimeout(id);
   }, [lastCheckIn]);
@@ -1874,11 +1876,11 @@ export default function BagTracker() {
   const doCheckIn = () => {
     if (checkedIn) {
       const waitMsg = formatCheckInCountdown(lastCheckIn);
-      showToast(`Already checked in — ${waitMsg.toLowerCase()}`, "warning");
+      showToast(`Already checked in. ${waitMsg}`, "warning");
       return;
     }
     const now = Date.now();
-    const nextPoints = checkInPoints + 1;
+    const nextPoints = Math.min(CHECKIN_POINTS_MAX, checkInPoints + 1);
     setCheckedIn(true);
     setCheckInPoints(nextPoints);
     setLastCheckIn(now);
@@ -2212,8 +2214,11 @@ export default function BagTracker() {
               ))}
             </div>
             {extraCheckIns > 0 && (
-              <div style={{ fontSize: 11, color: T.textMute, marginTop: -4, marginBottom: 8 }}>
-                +{extraCheckIns} more beyond visible slots
+              <div
+                style={{ fontSize: 11, color: T.textMute, marginTop: -4, marginBottom: 8 }}
+                aria-label={`Plus ${extraCheckIns} additional check-in points not shown`}
+              >
+                +{extraCheckIns} additional check-in points not shown
               </div>
             )}
             <div style={{ fontSize: 12, color: T.textSec, marginBottom: 14, fontFamily: T.sans }}>
