@@ -20,13 +20,27 @@ type TokenAccount = {
   };
 };
 type ISODateString = string & { __brand: "ISODateString" };
+type NativeTransfer = { amount: number; fromUserAccount?: string; toUserAccount?: string };
+type TokenTransfer = {
+  tokenAmount: number;
+  mint?: string;
+  decimals?: number;
+  fromUserAccount?: string;
+  toUserAccount?: string;
+};
 type TransactionInfo = {
   signature: string;
   slot: number;
   blockTime?: number | null;
+  timestamp?: number | null;
   err?: Record<string, unknown> | null;
   memo?: string | null;
   confirmationStatus?: string;
+  description?: string | null;
+  type?: string | null;
+  source?: string | null;
+  nativeTransfers?: NativeTransfer[];
+  tokenTransfers?: TokenTransfer[];
 };
 type Tier = "god" | "diamond" | "ape" | "survivor";
 type Goal = { type: "portfolio" | "followers"; target: number; label: string };
@@ -106,8 +120,11 @@ const FONT_URL =
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 const SOL_PRICE_USD = 178;
-const RPC_URL = "https://api.mainnet-beta.solana.com";
+const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY;
+const HELIUS_RPC_URL = HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` : null;
+const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || HELIUS_RPC_URL || "https://api.mainnet-beta.solana.com";
 const BAGS_API = (process.env.NEXT_PUBLIC_BAGS_API || "https://api.bags.fm").replace(/\/$/, "");
+const BAGS_API_KEY = process.env.NEXT_PUBLIC_BAGS_API_KEY;
 
 // ─── DESIGN TOKENS ──────────────────────────────────────────────────────────
 const T = {
