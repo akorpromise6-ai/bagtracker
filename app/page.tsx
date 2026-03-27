@@ -1532,6 +1532,7 @@ export default function BagTracker() {
   const SIDEBAR_W = sideOpen ? 236 : 68;
   const checkInFilled = Math.min(checkInPoints, CHECKIN_DISPLAY_MAX);
   const checkInSubtitle = checkedIn ? formatCheckInCountdown(lastCheckIn) : "Earn 1 point every 24h";
+  const extraCheckIns = Math.max(0, checkInPoints - CHECKIN_DISPLAY_MAX);
   const txsWithChange = txs.filter(hasNonZeroSolChange);
   const hasSolChanges = txsWithChange.length > 0;
   const txsDisplayCount = hasSolChanges
@@ -1559,6 +1560,7 @@ export default function BagTracker() {
     if (typeof window === "undefined") return;
     const storedPointsRaw = localStorage.getItem(CHECKIN_POINTS_KEY);
     const storedPoints = Number(storedPointsRaw);
+    // Defensive clamp in case localStorage is manually altered
     setCheckInPoints(Number.isFinite(storedPoints) ? Math.max(0, storedPoints) : 0);
     const storedLastRaw = localStorage.getItem(CHECKIN_LAST_KEY);
     const parsedLast = storedLastRaw ? Number(storedLastRaw) : null;
@@ -1871,7 +1873,8 @@ export default function BagTracker() {
   // Check in
   const doCheckIn = () => {
     if (checkedIn) {
-      showToast("Already checked in. Come back after 24 hours.", "warning");
+      const waitMsg = formatCheckInCountdown(lastCheckIn);
+      showToast(`Already checked in — ${waitMsg.toLowerCase()}`, "warning");
       return;
     }
     const now = Date.now();
@@ -2208,6 +2211,11 @@ export default function BagTracker() {
                 />
               ))}
             </div>
+            {extraCheckIns > 0 && (
+              <div style={{ fontSize: 11, color: T.textMute, marginTop: -4, marginBottom: 8 }}>
+                +{extraCheckIns} more beyond visible slots
+              </div>
+            )}
             <div style={{ fontSize: 12, color: T.textSec, marginBottom: 14, fontFamily: T.sans }}>
               {checkInPoints} points · {checkInSubtitle}
             </div>
@@ -2324,7 +2332,10 @@ export default function BagTracker() {
                 {HELIUS_API_KEY ? "via Helius RPC" : "via Solana RPC"} · {txsLabel}
               </span>
             </div>
-            <div style={{ fontSize: 11, color: T.textMute, fontFamily: T.mono, marginBottom: 8 }}>
+            <div
+              style={{ fontSize: 11, color: T.textMute, fontFamily: T.mono, marginBottom: 8 }}
+              aria-label="Current wallet SOL balance"
+            >
               Wallet balance: {fmtSol(sol)}
             </div>
             {txsWithChange.length === 0 && txs.length > 0 && (
