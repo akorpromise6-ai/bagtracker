@@ -600,32 +600,32 @@ function normalizeBagsTokens(raw: unknown): BagsToken[] {
     .map((r) => {
       if (!r || typeof r !== "object") return null;
       const t = r as Record<string, unknown>;
+      const symbol = typeof t.symbol === "string" ? t.symbol : undefined;
+      const ticker = typeof t.ticker === "string" ? t.ticker : undefined;
+      const mint = typeof t.mint === "string" ? t.mint : undefined;
+      const address = typeof t.address === "string" ? t.address : undefined;
+      const token = typeof t.token === "string" ? t.token : undefined;
+      const hasIdentifier = symbol || ticker || mint || address || token;
+      if (!hasIdentifier) return null;
       return {
         chain: typeof t.chain === "string" ? t.chain : undefined,
         network: typeof t.network === "string" ? t.network : undefined,
-        symbol: typeof t.symbol === "string" ? t.symbol : undefined,
-        ticker: typeof t.ticker === "string" ? t.ticker : undefined,
+        symbol,
+        ticker,
         name: typeof t.name === "string" ? t.name : undefined,
-        mint: typeof t.mint === "string" ? t.mint : undefined,
-        address: typeof t.address === "string" ? t.address : undefined,
-        token: typeof t.token === "string" ? t.token : undefined,
+        mint,
+        address,
+        token,
       } as BagsToken;
     })
-    .filter(
-      (t): t is BagsToken =>
-        Boolean(
-          t &&
-            (t.chain || t.network || t.symbol || t.ticker || t.name || t.mint || t.address || t.token)
-        )
-    );
+    .filter((t): t is BagsToken => Boolean(t));
 }
 
 function filterSolanaBagsTokens(tokens: BagsToken[]) {
   return tokens.filter((t) => {
     const network = (t.chain || t.network || "").toLowerCase();
     if (network && !network.includes("sol")) return false;
-    const code =
-      t.symbol || t.ticker || t.name || t.mint || t.address || t.token;
+    const code = t.symbol || t.ticker || t.mint || t.address || t.token;
     if (!code) return false;
     return code.toLowerCase().endsWith("bags");
   });
@@ -637,15 +637,15 @@ async function fetchBagsTokens(pk: string): Promise<BagsToken[] | null> {
     `/wallets/${pk}/tokens`,
     `/profiles/${pk}/tokens`,
   ];
-  let sawEmpty = false;
+  let hadResponse = false;
   for (const path of paths) {
     const data = await fetchJson<unknown>(path);
     if (data === null) continue;
+    hadResponse = true;
     const tokens = normalizeBagsTokens(data);
     if (tokens.length) return tokens;
-    sawEmpty = true;
   }
-  return sawEmpty ? [] : null;
+  return hadResponse ? [] : null;
 }
 
 function normalizeLeaderboard(raw: unknown): LeaderboardEntry[] {
