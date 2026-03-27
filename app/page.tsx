@@ -147,6 +147,7 @@ const REF_EARNING_PER_REF = 0.05;
 const CHECKIN_POINTS_KEY = "bagtracker:checkin-points";
 const CHECKIN_LAST_KEY = "bagtracker:last-checkin";
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const CHECKIN_DISPLAY_MAX = 7;
 
 // ─── DESIGN TOKENS ──────────────────────────────────────────────────────────
 const T = {
@@ -1529,16 +1530,17 @@ export default function BagTracker() {
       ? (totalUsd / goal.target) * 100
       : ((stats?.followers || 0) / goal.target) * 100;
   const SIDEBAR_W = sideOpen ? 236 : 68;
-  const checkInFilled = Math.min(checkInPoints, 7);
+  const checkInFilled = Math.min(checkInPoints, CHECKIN_DISPLAY_MAX);
   const checkInSubtitle = checkedIn ? formatCheckInCountdown(lastCheckIn) : "Earn 1 point every 24h";
   const txsWithChange = txs.filter(hasNonZeroSolChange);
-  const txsDisplayCount = txsWithChange.length
+  const hasSolChanges = txsWithChange.length > 0;
+  const txsDisplayCount = hasSolChanges
     ? Math.min(txsWithChange.length, TX_DISPLAY_LIMIT)
     : Math.min(txs.length, TX_DISPLAY_LIMIT);
-  const txsLabel = txsWithChange.length
+  const txsLabel = hasSolChanges
     ? `Last ${txsDisplayCount} SOL change${txsDisplayCount === 1 ? "" : "s"}`
     : `Last ${txsDisplayCount} transaction${txsDisplayCount === 1 ? "" : "s"}`;
-  const txsForDisplay = (txsWithChange.length ? txsWithChange : txs).slice(0, TX_DISPLAY_LIMIT);
+  const txsForDisplay = (hasSolChanges ? txsWithChange : txs).slice(0, TX_DISPLAY_LIMIT);
 
   // Responsive
   useEffect(() => {
@@ -1868,7 +1870,7 @@ export default function BagTracker() {
 
   // Check in
   const doCheckIn = () => {
-    if (hasCheckedInWithin24h(lastCheckIn)) {
+    if (checkedIn) {
       showToast("Already checked in. Come back after 24 hours.", "warning");
       return;
     }
@@ -2193,7 +2195,7 @@ export default function BagTracker() {
               )}
             </div>
             <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
-              {Array.from({ length: 7 }, (_, i) => (
+              {Array.from({ length: CHECKIN_DISPLAY_MAX }, (_, i) => (
                 <div
                   key={i}
                   style={{
