@@ -1560,6 +1560,10 @@ export default function BagTracker() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const storedPointsRaw = localStorage.getItem(CHECKIN_POINTS_KEY);
+    if (storedPointsRaw == null) {
+      setCheckInPoints(0);
+      return;
+    }
     const storedPoints = Number(storedPointsRaw);
     // Defensive clamp in case localStorage is manually altered
     setCheckInPoints(
@@ -1875,7 +1879,7 @@ export default function BagTracker() {
   // Check in
   const doCheckIn = () => {
     if (checkedIn) {
-      const waitMsg = formatCheckInCountdown(lastCheckIn);
+      const waitMsg = lastCheckIn ? formatCheckInCountdown(lastCheckIn) : "Ready to check in";
       showToast(`Already checked in. ${waitMsg}`, "warning");
       return;
     }
@@ -1890,7 +1894,7 @@ export default function BagTracker() {
     } catch {
       /* ignore storage errors */
     }
-    showToast(`+1 point added — total ${nextPoints}`);
+    showToast(`+1 point added. Total: ${nextPoints}`);
   };
 
   // Place wager
@@ -2216,9 +2220,9 @@ export default function BagTracker() {
             {extraCheckIns > 0 && (
               <div
                 style={{ fontSize: 11, color: T.textMute, marginTop: -4, marginBottom: 8 }}
-                aria-label={`Plus ${extraCheckIns} additional check-in points not shown`}
+                aria-label={`Plus ${extraCheckIns} additional points not shown`}
               >
-                +{extraCheckIns} additional check-in points not shown
+                +{extraCheckIns} additional points not shown
               </div>
             )}
             <div style={{ fontSize: 12, color: T.textSec, marginBottom: 14, fontFamily: T.sans }}>
