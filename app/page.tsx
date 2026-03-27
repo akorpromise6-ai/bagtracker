@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useEffect, useCallback, useRef, type ReactNode, type CSSProperties } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode, type CSSProperties } from "react";
 
 type PublicKeyString = string & { __brand: "PublicKey" };
 type WalletInfo = { publicKey: PublicKeyString };
@@ -807,6 +807,14 @@ const hasNonZeroSolChange = (tx: TransactionInfo) => {
   return change !== null && !Number.isNaN(change) && change !== 0;
 };
 
+const readStoredNumber = (key: string): number | null => {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem(key);
+  if (raw == null) return null;
+  const num = Number(raw);
+  return Number.isFinite(num) ? num : null;
+};
+
 // ─── ANIMATED NUMBER ─────────────────────────────────────────────────────────
 function AnimNum({
   to,
@@ -1534,15 +1542,21 @@ export default function BagTracker() {
   const checkInFilled = Math.min(checkInPoints, CHECKIN_DISPLAY_MAX);
   const checkInSubtitle = checkedIn ? formatCheckInCountdown(lastCheckIn) : "Earn 1 point every 24h";
   const extraCheckIns = Math.max(0, checkInPoints - CHECKIN_DISPLAY_MAX);
-  const txsWithChange = txs.filter(hasNonZeroSolChange);
-  const hasSolChanges = txsWithChange.length > 0;
-  const txsDisplayCount = hasSolChanges
-    ? Math.min(txsWithChange.length, TX_DISPLAY_LIMIT)
-    : Math.min(txs.length, TX_DISPLAY_LIMIT);
-  const txsLabel = hasSolChanges
-    ? `Last ${txsDisplayCount} SOL change${txsDisplayCount === 1 ? "" : "s"}`
-    : `Last ${txsDisplayCount} transaction${txsDisplayCount === 1 ? "" : "s"}`;
-  const txsForDisplay = (hasSolChanges ? txsWithChange : txs).slice(0, TX_DISPLAY_LIMIT);
+  const { txsForDisplay, txsLabel, hasSolChanges } = useMemo(() => {
+    const txsWithChange = txs.filter(hasNonZeroSolChange);
+    const hasChanges = txsWithChange.length > 0;
+    const txsDisplayCount = hasChanges
+      ? Math.min(txsWithChange.length, TX_DISPLAY_LIMIT)
+      : Math.min(txs.length, TX_DISPLAY_LIMIT);
+    const label = hasChanges
+      ? `Last ${txsDisplayCount} SOL change${txsDisplayCount === 1 ? "" : "s"}`
+      : `Last ${txsDisplayCount} transaction${txsDisplayCount === 1 ? "" : "s"}`;
+    return {
+      txsForDisplay: (hasChanges ? txsWithChange : txs).slice(0, TX_DISPLAY_LIMIT),
+      txsLabel: label,
+      hasSolChanges: hasChanges,
+    };
+  }, [txs]);
 
   // Responsive
   useEffect(() => {
@@ -1558,22 +1572,13 @@ export default function BagTracker() {
 
   // Restore daily check-in progress
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const storedPointsRaw = localStorage.getItem(CHECKIN_POINTS_KEY);
-    if (storedPointsRaw == null) {
-      setCheckInPoints(0);
-      return;
-    }
-    const storedPoints = Number(storedPointsRaw);
-    // Defensive clamp in case localStorage is manually altered
+    const storedPoints = readStoredNumber(CHECKIN_POINTS_KEY);
     setCheckInPoints(
-      Number.isFinite(storedPoints) ? Math.min(CHECKIN_POINTS_MAX, Math.max(0, storedPoints)) : 0
+      storedPoints == null ? 0 : Math.min(CHECKIN_POINTS_MAX, Math.max(0, storedPoints))
     );
-    const storedLastRaw = localStorage.getItem(CHECKIN_LAST_KEY);
-    const parsedLast = storedLastRaw ? Number(storedLastRaw) : null;
-    const validLast = parsedLast !== null && Number.isFinite(parsedLast) ? parsedLast : null;
-    setLastCheckIn(validLast);
-    setCheckedIn(hasCheckedInWithin24h(validLast));
+    const storedLast = readStoredNumber(CHECKIN_LAST_KEY);
+    setLastCheckIn(storedLast);
+    setCheckedIn(hasCheckedInWithin24h(storedLast));
   }, []);
 
   // Auto-unlock check-in once 24h have passed
@@ -1586,6 +1591,7 @@ export default function BagTracker() {
     setCheckedIn(withinWindow);
     if (!withinWindow) return;
     const remaining = Math.max(0, lastCheckIn + ONE_DAY_MS - Date.now());
+    if (remaining > 2147483647) return;
     const id = setTimeout(() => setCheckedIn(false), remaining);
     return () => clearTimeout(id);
   }, [lastCheckIn]);
@@ -2218,10 +2224,7 @@ export default function BagTracker() {
               ))}
             </div>
             {extraCheckIns > 0 && (
-              <div
-                style={{ fontSize: 11, color: T.textMute, marginTop: -4, marginBottom: 8 }}
-                aria-label={`Plus ${extraCheckIns} additional points not shown`}
-              >
+              <div style={{ fontSize: 11, color: T.textMute, marginTop: -4, marginBottom: 8 }}>
                 +{extraCheckIns} additional points not shown
               </div>
             )}
@@ -2347,7 +2350,7 @@ export default function BagTracker() {
             >
               Wallet balance: {fmtSol(sol)}
             </div>
-            {txsWithChange.length === 0 && txs.length > 0 && (
+            {!hasSolChanges && txsForDisplay.length > 0 && (
               <div style={{ fontSize: 11, color: T.textMute, marginBottom: 6 }}>
                 No SOL deltas detected — showing recent transactions instead.
               </div>
