@@ -1678,10 +1678,6 @@ export default function BagTracker() {
 
   useEffect(() => {
     const walletPk = wallet?.publicKey ? wallet.publicKey.toString() : "";
-    if (!walletPk) {
-      setRefEarnings(EMPTY_REFERRAL_STATS);
-      return;
-    }
     syncReferralStats(walletPk);
   }, [wallet?.publicKey, syncReferralStats]);
 
@@ -1724,11 +1720,6 @@ export default function BagTracker() {
 
   useEffect(() => {
     if (!wallet?.publicKey || !pendingReferrer) return;
-    if (!isValidPublicKeyString(pendingReferrer)) {
-      setPendingReferrer(null);
-      if (typeof window !== "undefined") localStorage.removeItem(PENDING_REF_KEY);
-      return;
-    }
     const walletPk = wallet.publicKey.toString();
     if (pendingReferrer === walletPk) {
       setPendingReferrer(null);
@@ -1746,14 +1737,13 @@ export default function BagTracker() {
         recordedRemotely = await recordRemoteReferral(referrer, referred);
       } catch (err) {
         console.error("[bagtracker] referral capture failed", err);
-        recordedRemotely = false;
       } finally {
         setToast(
           recordedRemotely
             ? { msg: "Referral recorded — thanks for using a friend's link!", type: "success" }
             : recordedLocally
             ? { msg: "Referral captured locally — syncing may take a moment.", type: "warning" }
-            : { msg: "Unable to record referral right now. Please try again.", type: "error" }
+            : { msg: "Unable to record referral. Please reconnect to try again.", type: "error" }
         );
         setPendingReferrer(null);
         if (typeof window !== "undefined") localStorage.removeItem(PENDING_REF_KEY);
