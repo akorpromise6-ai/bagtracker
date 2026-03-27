@@ -149,6 +149,7 @@ const CHECKIN_LAST_KEY = "bagtracker:last-checkin";
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const CHECKIN_DISPLAY_MAX = 7;
 const CHECKIN_POINTS_MAX = 365;
+const MAX_SETTIMEOUT_DELAY = 2147483647;
 
 // ─── DESIGN TOKENS ──────────────────────────────────────────────────────────
 const T = {
@@ -805,6 +806,11 @@ function activityColor(change: number | null | undefined) {
 const hasNonZeroSolChange = (tx: TransactionInfo) => {
   const change = tx.solChange ?? null;
   return change !== null && !Number.isNaN(change) && change !== 0;
+};
+
+const clampCheckInPoints = (value: number | null) => {
+  if (value == null || Number.isNaN(value)) return 0;
+  return Math.min(CHECKIN_POINTS_MAX, Math.max(0, value));
 };
 
 const readStoredNumber = (key: string): number | null => {
@@ -1573,9 +1579,7 @@ export default function BagTracker() {
   // Restore daily check-in progress
   useEffect(() => {
     const storedPoints = readStoredNumber(CHECKIN_POINTS_KEY);
-    setCheckInPoints(
-      storedPoints == null ? 0 : Math.min(CHECKIN_POINTS_MAX, Math.max(0, storedPoints))
-    );
+    setCheckInPoints(clampCheckInPoints(storedPoints));
     const storedLast = readStoredNumber(CHECKIN_LAST_KEY);
     setLastCheckIn(storedLast);
     setCheckedIn(hasCheckedInWithin24h(storedLast));
@@ -1591,7 +1595,7 @@ export default function BagTracker() {
     setCheckedIn(withinWindow);
     if (!withinWindow) return;
     const remaining = Math.max(0, lastCheckIn + ONE_DAY_MS - Date.now());
-    if (remaining > 2147483647) return;
+    if (remaining > MAX_SETTIMEOUT_DELAY) return;
     const id = setTimeout(() => setCheckedIn(false), remaining);
     return () => clearTimeout(id);
   }, [lastCheckIn]);
@@ -1885,12 +1889,16 @@ export default function BagTracker() {
   // Check in
   const doCheckIn = () => {
     if (checkedIn) {
-      const waitMsg = lastCheckIn ? formatCheckInCountdown(lastCheckIn) : "Ready to check in";
-      showToast(`Already checked in. ${waitMsg}`, "warning");
-      return;
+      if (!lastCheckIn) {
+        setCheckedIn(false);
+      } else {
+        const waitMsg = formatCheckInCountdown(lastCheckIn);
+        showToast(`Already checked in. ${waitMsg}`, "warning");
+        return;
+      }
     }
     const now = Date.now();
-    const nextPoints = Math.min(CHECKIN_POINTS_MAX, checkInPoints + 1);
+    const nextPoints = clampCheckInPoints(checkInPoints + 1);
     setCheckedIn(true);
     setCheckInPoints(nextPoints);
     setLastCheckIn(now);
