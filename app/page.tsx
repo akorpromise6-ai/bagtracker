@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useEffect, useCallback, useRef, type ReactNode, type CSSProperties } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode, type CSSProperties } from "react";
 
 type PublicKeyString = string & { __brand: "PublicKey" };
 type WalletInfo = { publicKey: PublicKeyString };
@@ -139,11 +139,17 @@ const HELIUS_RPC_URL = HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key
 const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || HELIUS_RPC_URL || "https://api.mainnet-beta.solana.com";
 const BAGS_API = (process.env.NEXT_PUBLIC_BAGS_API || "https://api.bags.fm").replace(/\/$/, "");
 const BAGS_API_KEY = process.env.NEXT_PUBLIC_BAGS_API_KEY;
-const TX_FETCH_LIMIT = 20;
-const TX_DISPLAY_LIMIT = 8;
+const TX_FETCH_LIMIT = 40;
+const TX_DISPLAY_LIMIT = 10;
 const REF_STORAGE_KEY = "bagtracker:referrals";
 const PENDING_REF_KEY = "bagtracker:pending-ref";
 const REF_EARNING_PER_REF = 0.05;
+const CHECKIN_POINTS_KEY = "bagtracker:checkin-points";
+const CHECKIN_LAST_KEY = "bagtracker:last-checkin";
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const CHECKIN_DISPLAY_MAX = 7;
+const CHECKIN_POINTS_MAX = 365;
+const MAX_SETTIMEOUT_DELAY = 2147483647;
 
 // ─── DESIGN TOKENS ──────────────────────────────────────────────────────────
 const T = {
@@ -695,8 +701,25 @@ const fmt$ = (n: number | string, d = 2) =>
 const fmtN = (n: number | string, d = 2) =>
   Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 const fmtSol = (n: number | string) =>
-  "◎" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  "◎" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
 const shrt = (a: string | null | undefined) => (a ? a.slice(0, 5) + "..." + a.slice(-4) : "");
+
+function hasCheckedInWithin24h(last: number | null) {
+  if (!last) return false;
+  return Date.now() - last < ONE_DAY_MS;
+}
+
+function formatCheckInCountdown(last: number | null) {
+  if (!last) return "Ready to check in";
+  const remaining = Math.max(0, last + ONE_DAY_MS - Date.now());
+  if (remaining <= 0) return "Ready to check in";
+  const hours = Math.floor(remaining / 3600000);
+  const minutes = Math.floor((remaining % 3600000) / 60000);
+  if (hours > 0) return `Next point in ${hours}h ${minutes.toString().padStart(2, "0")}m`;
+  if (minutes > 0) return `Next point in ${minutes}m`;
+  const seconds = Math.floor((remaining % 60000) / 1000);
+  return `Next point in ${seconds}s`;
+}
 
 function calcDegenScore(sol: number, tokenCount: number, txCount: number) {
   const liquidity = Math.min(sol * 2, 40);
@@ -771,7 +794,7 @@ function formatAgo(ts?: number | null) {
 function formatSolDelta(v?: number | null) {
   if (v == null || Number.isNaN(v)) return "—";
   const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(3)} ◎`;
+  return `${sign}${v.toFixed(4)} ◎`;
 }
 
 function activityColor(change: number | null | undefined) {
@@ -779,6 +802,24 @@ function activityColor(change: number | null | undefined) {
   if (change === 0) return T.text;
   return change > 0 ? T.green : T.red;
 }
+
+const hasNonZeroSolChange = (tx: TransactionInfo) => {
+  const change = tx.solChange ?? null;
+  return change !== null && !Number.isNaN(change) && change !== 0;
+};
+
+const clampCheckInPoints = (value: number | null) => {
+  if (value == null || Number.isNaN(value)) return 0;
+  return Math.min(CHECKIN_POINTS_MAX, Math.max(0, value));
+};
+
+const readStoredNumber = (key: string): number | null => {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem(key);
+  if (raw == null) return null;
+  const num = Number(raw);
+  return Number.isFinite(num) ? num : null;
+};
 
 // ─── ANIMATED NUMBER ─────────────────────────────────────────────────────────
 function AnimNum({
@@ -1465,8 +1506,9 @@ export default function BagTracker() {
   // Feature state
   const [minted, setMinted] = useState(false);
   const [minting, setMinting] = useState(false);
-  const [streak, setStreak] = useState(4);
+  const [checkInPoints, setCheckInPoints] = useState(0);
   const [checkedIn, setCheckedIn] = useState(false);
+  const [lastCheckIn, setLastCheckIn] = useState<number | null>(null);
   const [goal, setGoal] = useState<Goal>({ type: "portfolio", target: 10000, label: "$10k" });
   const [wagers, setWagers] = useState<Wager[]>([]);
   const [watching, setWatching] = useState<string[]>([]);
@@ -1503,6 +1545,24 @@ export default function BagTracker() {
       ? (totalUsd / goal.target) * 100
       : ((stats?.followers || 0) / goal.target) * 100;
   const SIDEBAR_W = sideOpen ? 236 : 68;
+  const checkInFilled = Math.min(checkInPoints, CHECKIN_DISPLAY_MAX);
+  const checkInSubtitle = checkedIn ? formatCheckInCountdown(lastCheckIn) : "Earn 1 point every 24h";
+  const extraCheckIns = Math.max(0, checkInPoints - CHECKIN_DISPLAY_MAX);
+  const { txsForDisplay, txsLabel, hasSolChanges } = useMemo(() => {
+    const txsWithChange = txs.filter(hasNonZeroSolChange);
+    const hasChanges = txsWithChange.length > 0;
+    const txsDisplayCount = hasChanges
+      ? Math.min(txsWithChange.length, TX_DISPLAY_LIMIT)
+      : Math.min(txs.length, TX_DISPLAY_LIMIT);
+    const label = hasChanges
+      ? `Last ${txsDisplayCount} SOL change${txsDisplayCount === 1 ? "" : "s"}`
+      : `Last ${txsDisplayCount} transaction${txsDisplayCount === 1 ? "" : "s"}`;
+    return {
+      txsForDisplay: (hasChanges ? txsWithChange : txs).slice(0, TX_DISPLAY_LIMIT),
+      txsLabel: label,
+      hasSolChanges: hasChanges,
+    };
+  }, [txs]);
 
   // Responsive
   useEffect(() => {
@@ -1515,6 +1575,30 @@ export default function BagTracker() {
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
   }, []);
+
+  // Restore daily check-in progress
+  useEffect(() => {
+    const storedPoints = readStoredNumber(CHECKIN_POINTS_KEY);
+    setCheckInPoints(clampCheckInPoints(storedPoints));
+    const storedLast = readStoredNumber(CHECKIN_LAST_KEY);
+    setLastCheckIn(storedLast);
+    setCheckedIn(hasCheckedInWithin24h(storedLast));
+  }, []);
+
+  // Auto-unlock check-in once 24h have passed
+  useEffect(() => {
+    if (!lastCheckIn) {
+      setCheckedIn(false);
+      return;
+    }
+    const withinWindow = hasCheckedInWithin24h(lastCheckIn);
+    setCheckedIn(withinWindow);
+    if (!withinWindow) return;
+    const remaining = Math.max(0, lastCheckIn + ONE_DAY_MS - Date.now());
+    if (remaining > MAX_SETTIMEOUT_DELAY) return;
+    const id = setTimeout(() => setCheckedIn(false), remaining);
+    return () => clearTimeout(id);
+  }, [lastCheckIn]);
 
   // Capture referral parameter from URL or previous session
   useEffect(() => {
@@ -1804,10 +1888,27 @@ export default function BagTracker() {
 
   // Check in
   const doCheckIn = () => {
-    if (checkedIn) return;
+    if (checkedIn) {
+      if (!lastCheckIn) {
+        setCheckedIn(false);
+      } else {
+        const waitMsg = formatCheckInCountdown(lastCheckIn);
+        showToast(`Already checked in. ${waitMsg}`, "warning");
+        return;
+      }
+    }
+    const now = Date.now();
+    const nextPoints = clampCheckInPoints(checkInPoints + 1);
     setCheckedIn(true);
-    setStreak((s) => Math.min(s + 1, 7));
-    showToast(`Day ${streak + 1} streak — keep building!`);
+    setCheckInPoints(nextPoints);
+    setLastCheckIn(now);
+    try {
+      localStorage.setItem(CHECKIN_POINTS_KEY, String(nextPoints));
+      localStorage.setItem(CHECKIN_LAST_KEY, String(now));
+    } catch {
+      /* ignore storage errors */
+    }
+    showToast(`+1 point added. Total: ${nextPoints}`);
   };
 
   // Place wager
@@ -2082,7 +2183,7 @@ export default function BagTracker() {
           <Card>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
               <Ico n="flame" s={16} c={T.green} />
-              <span style={{ fontWeight: 700, fontSize: 14, color: T.text }}>Daily Streak</span>
+              <span style={{ fontWeight: 700, fontSize: 14, color: T.text }}>Daily Check-ins</span>
               {checkedIn && (
                 <span
                   style={{
@@ -2099,23 +2200,44 @@ export default function BagTracker() {
                   Checked in
                 </span>
               )}
+              {!checkedIn && (
+                <span
+                  style={{
+                    marginLeft: "auto",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: "2px 8px",
+                    background: T.surfaceAlt,
+                    color: T.textSec,
+                    borderRadius: 20,
+                    fontFamily: T.mono,
+                  }}
+                >
+                  {checkInPoints} pts
+                </span>
+              )}
             </div>
             <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
-              {Array.from({ length: 7 }, (_, i) => (
+              {Array.from({ length: CHECKIN_DISPLAY_MAX }, (_, i) => (
                 <div
                   key={i}
                   style={{
                     flex: 1,
                     height: 8,
                     borderRadius: 4,
-                    background: i < streak ? `linear-gradient(90deg,${T.green},#4ade80)` : T.border,
+                    background: i < checkInFilled ? `linear-gradient(90deg,${T.green},#4ade80)` : T.border,
                     transition: "background .3s",
                   }}
                 />
               ))}
             </div>
+            {extraCheckIns > 0 && (
+              <div style={{ fontSize: 11, color: T.textMute, marginTop: -4, marginBottom: 8 }}>
+                +{extraCheckIns} additional points not shown
+              </div>
+            )}
             <div style={{ fontSize: 12, color: T.textSec, marginBottom: 14, fontFamily: T.sans }}>
-              {streak}/7 days · {checkedIn ? "Come back tomorrow" : "Check in to keep your streak"}
+              {checkInPoints} points · {checkInSubtitle}
             </div>
             <Btn
               fullWidth
@@ -2124,7 +2246,7 @@ export default function BagTracker() {
               icon={checkedIn ? "check" : "flame"}
               onClick={doCheckIn}
             >
-              {checkedIn ? "Checked in today" : "Check In Now"}
+              {checkedIn ? "Checked in today" : "Add today's point"}
             </Btn>
           </Card>
 
@@ -2222,19 +2344,30 @@ export default function BagTracker() {
           </div>
         </Card>
 
-        <Card>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            <Ico n="activity" s={16} c={T.green} />
-            <span style={{ fontWeight: 700, fontSize: 14, color: T.text }}>Recent On-Chain Activity</span>
-            <span style={{ marginLeft: "auto", fontSize: 10, fontFamily: T.mono, color: T.textMute }}>
-              {HELIUS_API_KEY ? "via Helius RPC" : "via Solana RPC"}
-            </span>
-          </div>
-          {txs.length === 0 ? (
-            <div style={{ color: T.textMute, fontSize: 13 }}>No transactions found for this wallet yet.</div>
-          ) : (
+          <Card>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Ico n="activity" s={16} c={T.green} />
+              <span style={{ fontWeight: 700, fontSize: 14, color: T.text }}>Recent On-Chain Activity</span>
+              <span style={{ marginLeft: "auto", fontSize: 10, fontFamily: T.mono, color: T.textMute }}>
+                {HELIUS_API_KEY ? "via Helius RPC" : "via Solana RPC"} · {txsLabel}
+              </span>
+            </div>
+            <div
+              style={{ fontSize: 11, color: T.textMute, fontFamily: T.mono, marginBottom: 8 }}
+              aria-label="Current wallet SOL balance"
+            >
+              Wallet balance: {fmtSol(sol)}
+            </div>
+            {!hasSolChanges && txsForDisplay.length > 0 && (
+              <div style={{ fontSize: 11, color: T.textMute, marginBottom: 6 }}>
+                No SOL deltas detected — showing recent transactions instead.
+              </div>
+            )}
+            {txsForDisplay.length === 0 ? (
+              <div style={{ color: T.textMute, fontSize: 13 }}>No transactions found for this wallet yet.</div>
+            ) : (
             <div style={{ display: "grid", gap: 10 }}>
-              {txs.slice(0, TX_DISPLAY_LIMIT).map((t) => {
+              {txsForDisplay.map((t) => {
                 const when = t.timestamp ?? t.blockTime ?? null;
                 const change = t.solChange ?? null;
                 const color = activityColor(change);
