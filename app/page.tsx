@@ -699,6 +699,7 @@ async function fetchReferralStats(referrer: string): Promise<ReferralStats | nul
   if (!isValidPublicKeyString(referrer)) return null;
   const data = await fetchJson<Partial<ReferralStats>>(`/referrals?wallet=${encodeURIComponent(referrer)}`);
   if (data) return normalizeReferralStats(data);
+  console.warn("[bagtracker] referral stats unavailable", referrer);
   return null;
 }
 
@@ -1527,15 +1528,24 @@ export default function BagTracker() {
   // Capture referral parameter from URL or previous session
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const storedRef = localStorage.getItem(PENDING_REF_KEY);
-    const urlRef = new URLSearchParams(window.location.search).get("ref");
-    const ref = urlRef || storedRef;
-    if (ref && isValidPublicKeyString(ref)) {
-      setPendingReferrer(ref);
-      localStorage.setItem(PENDING_REF_KEY, ref);
-    } else if (storedRef) {
-      localStorage.removeItem(PENDING_REF_KEY);
-    }
+    const readRef = () => {
+      const storedRef = localStorage.getItem(PENDING_REF_KEY);
+      const urlRef = new URLSearchParams(window.location.search).get("ref");
+      const ref = urlRef || storedRef;
+      if (ref && isValidPublicKeyString(ref)) {
+        setPendingReferrer(ref);
+        localStorage.setItem(PENDING_REF_KEY, ref);
+      } else if (storedRef) {
+        localStorage.removeItem(PENDING_REF_KEY);
+      }
+    };
+    readRef();
+    window.addEventListener("popstate", readRef);
+    window.addEventListener("hashchange", readRef);
+    return () => {
+      window.removeEventListener("popstate", readRef);
+      window.removeEventListener("hashchange", readRef);
+    };
   }, []);
 
   // Load fonts + global styles
@@ -1728,9 +1738,11 @@ export default function BagTracker() {
     const referrer = pendingReferrer;
     const referred = walletPk;
     const applyReferral = async () => {
+      let recordedLocally = false;
       let recordedRemotely = false;
       try {
         persistLocalReferral(referrer, referred);
+        recordedLocally = true;
         recordedRemotely = await recordRemoteReferral(referrer, referred);
       } catch (err) {
         console.error("[bagtracker] referral capture failed", err);
@@ -1739,16 +1751,15 @@ export default function BagTracker() {
         setToast(
           recordedRemotely
             ? { msg: "Referral recorded — thanks for using a friend's link!", type: "success" }
-            : { msg: "Referral captured locally — syncing may take a moment.", type: "warning" }
+            : recordedLocally
+            ? { msg: "Referral captured locally — syncing may take a moment.", type: "warning" }
+            : { msg: "Unable to record referral right now. Please try again.", type: "error" }
         );
         setPendingReferrer(null);
         if (typeof window !== "undefined") localStorage.removeItem(PENDING_REF_KEY);
       }
     };
-    applyReferral().catch((err) => {
-      console.error("[bagtracker] failed to record referral", err);
-      setToast({ msg: "Unable to record referral right now. Please try again.", type: "error" });
-    });
+    applyReferral();
   }, [wallet?.publicKey, pendingReferrer]);
 
   // Refresh wallet data
