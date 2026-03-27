@@ -160,6 +160,10 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const CHECKIN_DISPLAY_MAX = 7;
 const CHECKIN_POINTS_MAX = 365;
 const MAX_SETTIMEOUT_DELAY = 2147483647;
+// Distinguish second-based vs millisecond timestamps (1e11 ~ year 5138 in seconds, ~1973 in ms)
+const UNIX_MS_THRESHOLD = 1e11;
+const EARLIEST_TX_MS = Date.UTC(2000, 0, 1);
+const LATEST_TX_MS = Date.UTC(2100, 0, 1);
 
 // ─── DESIGN TOKENS ──────────────────────────────────────────────────────────
 const T = {
@@ -499,9 +503,12 @@ function normalizeTx(raw: unknown, wallet: string): TransactionInfo | null {
 async function fetchHeliusTxs(pk: string) {
   if (!HELIUS_API_KEY) return null;
   try {
-    const res = await fetch(`https://api.helius.xyz/v0/addresses/${pk}/transactions?limit=${TX_FETCH_LIMIT}`, {
-      headers: { Authorization: `Bearer ${HELIUS_API_KEY}` },
-    });
+    const res = await fetch(
+      `https://api.helius.xyz/v0/addresses/${pk}/transactions?limit=${TX_FETCH_LIMIT}&api-key=${HELIUS_API_KEY}`,
+      {
+        headers: { Accept: "application/json" },
+      }
+    );
     if (!res.ok) return null;
     const data = await res.json();
     if (!Array.isArray(data)) return null;
@@ -774,6 +781,13 @@ const fmtN = (n: number | string, d = 2) =>
   Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 const fmtSol = (n: number | string) =>
   "◎" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+const fmtPct = (n: number | string, d = 2) =>
+  `${Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d })}%`;
+const formatDailyPctLabel = (pct: number | null, isNew: boolean) => {
+  if (isNew) return "NEW";
+  if (pct == null) return "—";
+  return fmtPct(pct, 2);
+};
 const shrt = (a: string | null | undefined) => (a ? a.slice(0, 5) + "..." + a.slice(-4) : "");
 
 function hasCheckedInWithin24h(last: number | null) {
@@ -1636,6 +1650,28 @@ export default function BagTracker() {
     };
   }, [txs]);
 
+  const { solDailyDelta, solDailyPct, solDailyIsNew } = useMemo(() => {
+    const cutoff = Date.now() - ONE_DAY_MS;
+    const delta = txs.reduce((acc, tx) => {
+      const when = tx.timestamp ?? tx.blockTime ?? null;
+      if (!when) return acc;
+      const ms = when < UNIX_MS_THRESHOLD ? when * 1000 : when;
+      if (ms < EARLIEST_TX_MS || ms > LATEST_TX_MS) return acc;
+      if (ms < cutoff) return acc;
+      const change = tx.solChange ?? null;
+      if (change == null || Number.isNaN(change)) return acc;
+      return acc + change;
+    }, 0);
+    const prevBalance = sol - delta;
+    let pct: number | null = null;
+    const isNewBalance = prevBalance === 0 && delta > 0;
+    if (prevBalance > 0) {
+      pct = (delta / prevBalance) * 100;
+    }
+    return { solDailyDelta: delta, solDailyPct: pct, solDailyIsNew: isNewBalance };
+  }, [txs, sol]);
+  const solDailyPctLabel = formatDailyPctLabel(solDailyPct, solDailyIsNew);
+
   // Responsive
   useEffect(() => {
     const check = () => {
@@ -2251,7 +2287,19 @@ export default function BagTracker() {
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10 }}>
-            <StatBox label="SOL Balance" value={fmtSol(sol)} sub={fmt$(totalUsd)} color={T.green} />
+            <StatBox
+              label="SOL Balance"
+              value={fmtSol(sol)}
+              sub={
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span>{fmt$(totalUsd)}</span>
+                  <span style={{ color: activityColor(solDailyDelta), fontFamily: T.mono }}>
+                    {formatSolDelta(solDailyDelta)} ({solDailyPctLabel} 24h)
+                  </span>
+                </div>
+              }
+              color={T.green}
+            />
             <StatBox label="SPL Tokens" value={`${tokens.length}`} sub="Token accounts" />
             <StatBox label="Degen Score" value={`${stats.score}/100`} sub={stats.title} />
             <StatBox label="Global Rank" value={`#${fmtN(stats.rank, 0)}`} sub="All wallets" color={T.purple} />
