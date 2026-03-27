@@ -1495,7 +1495,7 @@ export default function BagTracker() {
   const [tipping, setTipping] = useState<string | null>(null);
   const [tipped, setTipped] = useState<Record<string, boolean>>({});
   const [refCopied, setRefCopied] = useState(false);
-  const [pendingRef, setPendingRef] = useState<string | null>(null);
+  const [pendingReferrer, setPendingReferrer] = useState<string | null>(null);
   const [refEarnings, setRefEarnings] = useState<ReferralStats>(EMPTY_REFERRAL_STATS);
   const [wagerForm, setWagerForm] = useState<WagerForm>({ type: "followers", amount: 5, target: 1000 });
   const [lbFilter, setLbFilter] = useState<"all" | Tier>("all");
@@ -1531,7 +1531,7 @@ export default function BagTracker() {
     const urlRef = new URLSearchParams(window.location.search).get("ref");
     const ref = urlRef || storedRef;
     if (ref && isValidPublicKeyString(ref)) {
-      setPendingRef(ref);
+      setPendingReferrer(ref);
       localStorage.setItem(PENDING_REF_KEY, ref);
     } else if (storedRef) {
       localStorage.removeItem(PENDING_REF_KEY);
@@ -1601,17 +1601,17 @@ export default function BagTracker() {
   const showToast = (msg: string, type: NonNullable<ToastState>["type"] = "success") => setToast({ msg, type });
 
   const syncReferralStats = useCallback(
-    async (referrer: string) => {
-      if (!referrer) {
+    async (walletAddress: string) => {
+      if (!walletAddress) {
         setRefEarnings(EMPTY_REFERRAL_STATS);
         return;
       }
-      const remote = await fetchReferralStats(referrer);
+      const remote = await fetchReferralStats(walletAddress);
       if (remote) {
         setRefEarnings(remote);
         return;
       }
-      setRefEarnings(calculateReferralTotals(referrer));
+      setRefEarnings(calculateReferralTotals(walletAddress));
     },
     []
   );
@@ -1713,34 +1713,43 @@ export default function BagTracker() {
   };
 
   useEffect(() => {
-    if (!wallet?.publicKey || !pendingRef) return;
-    if (!isValidPublicKeyString(pendingRef)) {
-      setPendingRef(null);
+    if (!wallet?.publicKey || !pendingReferrer) return;
+    if (!isValidPublicKeyString(pendingReferrer)) {
+      setPendingReferrer(null);
       if (typeof window !== "undefined") localStorage.removeItem(PENDING_REF_KEY);
       return;
     }
     const walletPk = wallet.publicKey.toString();
-    if (pendingRef === walletPk) {
-      setPendingRef(null);
+    if (pendingReferrer === walletPk) {
+      setPendingReferrer(null);
       if (typeof window !== "undefined") localStorage.removeItem(PENDING_REF_KEY);
       return;
     }
-    const referrer = pendingRef;
+    const referrer = pendingReferrer;
     const referred = walletPk;
     const applyReferral = async () => {
-      persistLocalReferral(referrer, referred);
+      let recordedRemotely = false;
       try {
-        const recorded = await recordRemoteReferral(referrer, referred);
-        if (recorded) setToast({ msg: "Referral recorded — thanks for using a friend's link!", type: "success" });
-      } catch {
-        /* noop */
+        persistLocalReferral(referrer, referred);
+        recordedRemotely = await recordRemoteReferral(referrer, referred);
+      } catch (err) {
+        console.error("[bagtracker] referral capture failed", err);
+        recordedRemotely = false;
       } finally {
-        setPendingRef(null);
+        setToast(
+          recordedRemotely
+            ? { msg: "Referral recorded — thanks for using a friend's link!", type: "success" }
+            : { msg: "Referral captured locally — syncing may take a moment.", type: "warning" }
+        );
+        setPendingReferrer(null);
         if (typeof window !== "undefined") localStorage.removeItem(PENDING_REF_KEY);
       }
     };
-    applyReferral().catch(() => {});
-  }, [wallet?.publicKey, pendingRef]);
+    applyReferral().catch((err) => {
+      console.error("[bagtracker] failed to record referral", err);
+      setToast({ msg: "Unable to record referral right now. Please try again.", type: "error" });
+    });
+  }, [wallet?.publicKey, pendingReferrer]);
 
   // Refresh wallet data
   const refreshWallet = async () => {
