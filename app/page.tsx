@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState, useEffect, useCallback, useRef, type ReactNode, type CSSProperties } from "react";
 
 type PublicKeyString = string & { __brand: "PublicKey" };
@@ -382,38 +383,13 @@ function Ico({ n, s = 18, c = "currentColor", w = 1.6 }: { n: IconName; s?: numb
 // ─── APP LOGO ────────────────────────────────────────────────────────────────
 function Logo({ size = 32 }: { size?: number }) {
   return (
-    <svg
+    <Image
+      src="/app-icon.png"
+      alt="BagTracker logo"
       width={size}
       height={size}
-      viewBox="0 0 48 48"
-      fill="none"
       style={{ display: "block", flexShrink: 0, borderRadius: size * 0.22 }}
-    >
-      <rect width="48" height="48" rx="10" fill="#0d1a0d" />
-      <rect width="48" height="48" rx="10" fill="url(#lg)" />
-      <defs>
-        <linearGradient id="lg" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#16a34a" stopOpacity="0.8" />
-          <stop offset="100%" stopColor="#0d1a0d" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path
-        d="M14 32C14 37 34 37 34 32V21C34 15 14 15 14 21Z"
-        fill="rgba(255,255,255,0.12)"
-        stroke="rgba(255,255,255,0.6)"
-        strokeWidth="1.4"
-      />
-      <path
-        d="M19 15C19 10.5 29 10.5 29 15"
-        stroke="rgba(255,255,255,0.6)"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        fill="none"
-      />
-      <circle cx="28.5" cy="26.5" r="6" stroke="#4ade80" strokeWidth="1.6" fill="none" />
-      <line x1="32.7" y1="30.7" x2="36" y2="34" stroke="#4ade80" strokeWidth="2.2" strokeLinecap="round" />
-      <path d="M24.5 24.5V27L26 28.5" stroke="#4ade80" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
+    />
   );
 }
 
