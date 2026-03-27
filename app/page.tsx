@@ -20,13 +20,28 @@ type TokenAccount = {
   };
 };
 type ISODateString = string & { __brand: "ISODateString" };
+type NativeTransfer = { amount: number; fromUserAccount?: string; toUserAccount?: string };
+type TokenTransfer = {
+  tokenAmount: number;
+  mint?: string;
+  decimals?: number;
+  fromUserAccount?: string;
+  toUserAccount?: string;
+};
 type TransactionInfo = {
   signature: string;
   slot: number;
   blockTime?: number | null;
+  timestamp?: number | null;
   err?: Record<string, unknown> | null;
   memo?: string | null;
   confirmationStatus?: string;
+  description?: string | null;
+  type?: string | null;
+  source?: string | null;
+  nativeTransfers?: NativeTransfer[];
+  tokenTransfers?: TokenTransfer[];
+  solChange?: number | null;
 };
 type Tier = "god" | "diamond" | "ape" | "survivor";
 type Goal = { type: "portfolio" | "followers"; target: number; label: string };
@@ -106,8 +121,13 @@ const FONT_URL =
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 const SOL_PRICE_USD = 178;
-const RPC_URL = "https://api.mainnet-beta.solana.com";
+const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY;
+const HELIUS_RPC_URL = HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` : null;
+const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || HELIUS_RPC_URL || "https://api.mainnet-beta.solana.com";
 const BAGS_API = (process.env.NEXT_PUBLIC_BAGS_API || "https://api.bags.fm").replace(/\/$/, "");
+const BAGS_API_KEY = process.env.NEXT_PUBLIC_BAGS_API_KEY;
+const TX_FETCH_LIMIT = 20;
+const TX_DISPLAY_LIMIT = 8;
 
 // ─── DESIGN TOKENS ──────────────────────────────────────────────────────────
 const T = {
@@ -425,16 +445,84 @@ async function getTokenAccounts(pk: string) {
   return r ? r.value : [];
 }
 
+function calcSolChangeForWallet(tx: { nativeTransfers?: NativeTransfer[] }, wallet: string) {
+  if (!Array.isArray(tx.nativeTransfers) || !tx.nativeTransfers.length) return null;
+  const lamports = tx.nativeTransfers.reduce((acc, nt) => {
+    const amount = Number(nt.amount || 0);
+    if (!Number.isFinite(amount)) return acc;
+    if (nt.toUserAccount === wallet) return acc + amount;
+    if (nt.fromUserAccount === wallet) return acc - amount;
+    return acc;
+  }, 0);
+  return lamports / 1e9;
+}
+
+function normalizeTx(raw: unknown, wallet: string): TransactionInfo | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const sig = typeof r.signature === "string" ? r.signature : "";
+  if (!sig) return null;
+  const slotNum = Number(r.slot ?? 0);
+  const slot = Number.isFinite(slotNum) ? slotNum : 0;
+  const blockTime = typeof r.blockTime === "number" ? r.blockTime : null;
+  const timestamp = typeof r.timestamp === "number" ? r.timestamp : blockTime;
+  const nativeTransfers = Array.isArray((r as { nativeTransfers?: unknown }).nativeTransfers)
+    ? (r as { nativeTransfers: NativeTransfer[] }).nativeTransfers
+    : [];
+  const tokenTransfers = Array.isArray((r as { tokenTransfers?: unknown }).tokenTransfers)
+    ? (r as { tokenTransfers: TokenTransfer[] }).tokenTransfers
+    : [];
+  return {
+    signature: sig,
+    slot,
+    blockTime,
+    timestamp,
+    err: (r.err as Record<string, unknown>) || null,
+    memo: (r.memo as string) || null,
+    confirmationStatus: (r.confirmationStatus as string) || undefined,
+    description: (r.description as string) || null,
+    type: (r.type as string) || null,
+    source: (r.source as string) || null,
+    nativeTransfers,
+    tokenTransfers,
+    solChange: calcSolChangeForWallet({ nativeTransfers }, wallet),
+  };
+}
+
+async function fetchHeliusTxs(pk: string) {
+  if (!HELIUS_API_KEY) return null;
+  try {
+    const res = await fetch(`https://api.helius.xyz/v0/addresses/${pk}/transactions?limit=${TX_FETCH_LIMIT}`, {
+      headers: { Authorization: `Bearer ${HELIUS_API_KEY}` },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!Array.isArray(data)) return null;
+    return data.map((t) => normalizeTx(t, pk)).filter(Boolean) as TransactionInfo[];
+  } catch {
+    return null;
+  }
+}
+
 async function getRecentTxs(pk: string) {
-  const r = await rpc("getSignaturesForAddress", [pk, { limit: 20 }]);
-  return r || [];
+  const helius = await fetchHeliusTxs(pk);
+  if (helius?.length) return helius;
+
+  const r = await rpc("getSignaturesForAddress", [pk, { limit: TX_FETCH_LIMIT }]);
+  const rows = Array.isArray(r) ? r : [];
+  return rows.map((t) => normalizeTx(t, pk)).filter(Boolean) as TransactionInfo[];
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
+    const headers = {
+      "Content-Type": "application/json",
+      ...(BAGS_API_KEY ? { Authorization: `Bearer ${BAGS_API_KEY}` } : {}),
+      ...(init?.headers || {}),
+    };
     const res = await fetch(`${BAGS_API}${path.startsWith("/") ? path : `/${path}`}`, {
       ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+      headers,
     });
     if (!res.ok) return null;
     return (await res.json()) as T;
@@ -453,16 +541,40 @@ async function waitForConfirmation(signature: string) {
   return false;
 }
 
-async function fetchSolUsdPrice() {
-  const price = await fetchJson<{ data?: { SOL?: { price?: number } } }>("/price/sol");
-  if (price?.data?.SOL?.price) return price.data.SOL.price;
+async function fetchJupiterPrice() {
   try {
     const res = await fetch("https://price.jup.ag/v6/price?ids=SOL");
     const json = await res.json();
-    return json?.data?.SOL?.price as number | undefined;
+    const val = Number(json?.data?.SOL?.price);
+    return Number.isFinite(val) ? val : undefined;
   } catch {
     return undefined;
   }
+}
+
+async function fetchCoingeckoPrice() {
+  try {
+    const res = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd");
+    const json = await res.json();
+    const val = Number(json?.solana?.usd);
+    return Number.isFinite(val) ? val : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function fetchSolUsdPrice() {
+  const price = await fetchJson<{ data?: { SOL?: { price?: number } } }>("/price/sol");
+  if (price?.data?.SOL?.price) return price.data.SOL.price;
+
+  const jup = await fetchJupiterPrice();
+  if (jup) return jup;
+
+  const cg = await fetchCoingeckoPrice();
+  if (cg) return cg;
+
+  console.warn("[bagtracker] Falling back to static SOL price");
+  return SOL_PRICE_USD;
 }
 
 async function fetchBagsProfile(pk: string) {
@@ -563,6 +675,32 @@ function buildStats(
 function isPhantomError(e: unknown): e is PhantomError {
   if (typeof e !== "object" || e === null || !("code" in e)) return false;
   return typeof (e as { code: unknown }).code === "number";
+}
+
+function formatAgo(ts?: number | null) {
+  if (!ts) return "—";
+  const ms = ts < 1e12 ? ts * 1000 : ts;
+  const diff = Date.now() - ms;
+  if (diff < 0) return "in future";
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function formatSolDelta(v?: number | null) {
+  if (v == null || Number.isNaN(v)) return "—";
+  const sign = v > 0 ? "+" : "";
+  return `${sign}${v.toFixed(3)} ◎`;
+}
+
+function activityColor(change: number | null | undefined) {
+  if (change == null) return T.text;
+  if (change === 0) return T.text;
+  return change > 0 ? T.green : T.red;
 }
 
 // ─── ANIMATED NUMBER ─────────────────────────────────────────────────────────
@@ -1916,6 +2054,57 @@ export default function BagTracker() {
               </div>
             ))}
           </div>
+        </Card>
+
+        <Card>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <Ico n="activity" s={16} c={T.green} />
+            <span style={{ fontWeight: 700, fontSize: 14, color: T.text }}>Recent On-Chain Activity</span>
+            <span style={{ marginLeft: "auto", fontSize: 10, fontFamily: T.mono, color: T.textMute }}>
+              {HELIUS_API_KEY ? "via Helius RPC" : "via Solana RPC"}
+            </span>
+          </div>
+          {txs.length === 0 ? (
+            <div style={{ color: T.textMute, fontSize: 13 }}>No transactions found for this wallet yet.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {txs.slice(0, TX_DISPLAY_LIMIT).map((t) => {
+                const when = t.timestamp ?? t.blockTime ?? null;
+                const change = t.solChange ?? null;
+                const color = activityColor(change);
+                const label = t.description || t.type || t.source || "Transaction";
+                return (
+                  <div
+                    key={t.signature}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: isMobile ? "1fr" : "1.4fr auto auto",
+                      gap: 8,
+                      alignItems: "center",
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      border: `1px solid ${T.border}`,
+                      background: T.surfaceAlt,
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 700, color: T.text }}>{label}</div>
+                      <div style={{ fontSize: 11, color: T.textMute }}>{formatAgo(when)}</div>
+                    </div>
+                    <div style={{ fontWeight: 700, fontFamily: T.mono, color }}>{formatSolDelta(change)}</div>
+                    <a
+                      href={`https://solscan.io/tx/${t.signature}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ fontSize: 11, color: T.textSec, textDecoration: "none" }}
+                    >
+                      {shrt(t.signature)}
+                    </a>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </Card>
 
         <Card>
