@@ -29,6 +29,16 @@ type TokenTransfer = {
   fromUserAccount?: string;
   toUserAccount?: string;
 };
+type BagsToken = {
+  chain?: string;
+  network?: string;
+  symbol?: string;
+  ticker?: string;
+  name?: string;
+  mint?: string;
+  address?: string;
+  token?: string;
+};
 type TransactionInfo = {
   signature: string;
   slot: number;
@@ -576,6 +586,68 @@ async function fetchBagsProfile(pk: string) {
   );
 }
 
+function normalizeBagsTokens(raw: unknown): BagsToken[] {
+  const rows = Array.isArray(raw)
+    ? raw
+    : Array.isArray((raw as { tokens?: unknown[] })?.tokens)
+    ? (raw as { tokens: unknown[] }).tokens
+    : Array.isArray((raw as { data?: unknown[] })?.data)
+    ? (raw as { data: unknown[] }).data
+    : Array.isArray((raw as { items?: unknown[] })?.items)
+    ? (raw as { items: unknown[] }).items
+    : [];
+  return rows
+    .map((r) => {
+      if (!r || typeof r !== "object") return null;
+      const t = r as Record<string, unknown>;
+      return {
+        chain: typeof t.chain === "string" ? t.chain : undefined,
+        network: typeof t.network === "string" ? t.network : undefined,
+        symbol: typeof t.symbol === "string" ? t.symbol : undefined,
+        ticker: typeof t.ticker === "string" ? t.ticker : undefined,
+        name: typeof t.name === "string" ? t.name : undefined,
+        mint: typeof t.mint === "string" ? t.mint : undefined,
+        address: typeof t.address === "string" ? t.address : undefined,
+        token: typeof t.token === "string" ? t.token : undefined,
+      } as BagsToken;
+    })
+    .filter(
+      (t): t is BagsToken =>
+        Boolean(
+          t &&
+            (t.chain || t.network || t.symbol || t.ticker || t.name || t.mint || t.address || t.token)
+        )
+    );
+}
+
+function filterSolanaBagsTokens(tokens: BagsToken[]) {
+  return tokens.filter((t) => {
+    const network = (t.chain || t.network || "").toLowerCase();
+    if (network && !network.includes("sol")) return false;
+    const code =
+      t.symbol || t.ticker || t.name || t.mint || t.address || t.token;
+    if (!code) return false;
+    return code.toLowerCase().endsWith("bags");
+  });
+}
+
+async function fetchBagsTokens(pk: string): Promise<BagsToken[] | null> {
+  const paths = [
+    `/tokens?wallet=${pk}&chain=solana`,
+    `/wallets/${pk}/tokens`,
+    `/profiles/${pk}/tokens`,
+  ];
+  let sawEmpty = false;
+  for (const path of paths) {
+    const data = await fetchJson<unknown>(path);
+    if (data === null) continue;
+    const tokens = normalizeBagsTokens(data);
+    if (tokens.length) return tokens;
+    sawEmpty = true;
+  }
+  return sawEmpty ? [] : null;
+}
+
 function normalizeLeaderboard(raw: unknown): LeaderboardEntry[] {
   const rows = Array.isArray(raw)
     ? raw
@@ -730,7 +802,7 @@ function buildStats(
   const score = bagStats?.score ?? calcDegenScore(sol, tokens.length, txs.length);
   const tier = bagStats?.tier ?? deriveTier(score);
   const txCount = bagStats?.txCount ?? txs.length;
-  const bags = bagStats?.bags ?? tokens.length;
+  const bags = bagStats?.bags ?? 0;
   return {
     score,
     pnl: bagStats?.pnl ?? 0,
@@ -1632,20 +1704,27 @@ export default function BagTracker() {
     setBagsProfileLoading(true);
     setBagsError(null);
     try {
-      const [balR, tknsR, txListR, bagProfileR] = await Promise.allSettled([
+      const [balR, tknsR, txListR, bagProfileR, bagTokensR] = await Promise.allSettled([
         getSolBalance(pk),
         getTokenAccounts(pk),
         getRecentTxs(pk),
         fetchBagsProfile(pk),
+        fetchBagsTokens(pk),
       ]);
       const bal = balR.status === "fulfilled" ? balR.value : 0;
       const tkns = tknsR.status === "fulfilled" ? tknsR.value : [];
       const txList = txListR.status === "fulfilled" ? txListR.value : [];
       const bagProfile = bagProfileR.status === "fulfilled" ? bagProfileR.value : null;
+      const bagTokens = bagTokensR.status === "fulfilled" ? bagTokensR.value : null;
+      const solanaBags = bagTokens ? filterSolanaBagsTokens(bagTokens) : null;
+      const bagStats =
+        solanaBags !== null
+          ? { ...(bagProfile?.stats || {}), bags: solanaBags.length }
+          : bagProfile?.stats;
       setSol(bal);
       setTokens(tkns);
       setTxs(txList);
-      const mergedStats = buildStats(bal, tkns, txList, bagProfile?.stats);
+      const mergedStats = buildStats(bal, tkns, txList, bagStats);
       setStats(mergedStats);
       applyBagsProfile(bagProfile || undefined);
     } catch {
