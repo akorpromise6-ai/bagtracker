@@ -115,6 +115,16 @@ const toPublicKeyString = (value: string): PublicKeyString => {
   return value as PublicKeyString;
 };
 
+const isValidPublicKeyString = (value: string | null | undefined) => {
+  if (!value) return false;
+  try {
+    toPublicKeyString(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const toISODateString = (date: Date): ISODateString => date.toISOString() as ISODateString;
 
 // ─── FONT LOADER ────────────────────────────────────────────────────────────
@@ -618,12 +628,12 @@ async function fetchLeaderboard() {
 }
 
 // ─── REFERRAL STORAGE ───────────────────────────────────────────────────────
-const EMPTY_REFERRAL: ReferralStats = { refs: 0, converted: 0, sol: 0 };
+const EMPTY_REFERRAL_STATS: ReferralStats = { refs: 0, converted: 0, sol: 0 };
 
 function normalizeReferralStats(raw?: Partial<ReferralStats> | null): ReferralStats {
   return {
-    refs: Number(raw?.refs ?? raw?.converted ?? 0) || 0,
-    converted: Number(raw?.converted ?? raw?.refs ?? 0) || 0,
+    refs: Number(raw?.refs ?? 0) || 0,
+    converted: Number(raw?.converted ?? 0) || 0,
     sol: Number(raw?.sol ?? 0) || 0,
   };
 }
@@ -635,7 +645,12 @@ function readReferralStore(): ReferralStore {
     const parsed = raw ? JSON.parse(raw) : {};
     if (parsed && typeof parsed === "object") {
       return Object.fromEntries(
-        Object.entries(parsed as ReferralStore).map(([k, v]) => [k, Array.isArray(v) ? v.filter(Boolean) : []])
+        Object.entries(parsed as ReferralStore).map(([k, v]) => [
+          k,
+          Array.isArray(v)
+            ? v.filter((item): item is string => typeof item === "string" && item.length > 0)
+            : [],
+        ])
       );
     }
   } catch {
@@ -654,9 +669,12 @@ function writeReferralStore(store: ReferralStore) {
 }
 
 function calculateReferralTotals(referrer: string): ReferralStats {
+  if (!isValidPublicKeyString(referrer)) return EMPTY_REFERRAL_STATS;
   const store = readReferralStore();
-  const refs = Array.isArray(store[referrer]) ? Array.from(new Set(store[referrer].filter(Boolean))) : [];
-  const converted = refs.length;
+  const uniqueRefs = Array.isArray(store[referrer])
+    ? Array.from(new Set(store[referrer].filter((v) => typeof v === "string" && v.length > 0)))
+    : [];
+  const converted = uniqueRefs.length;
   return {
     refs: converted,
     converted,
@@ -665,9 +683,12 @@ function calculateReferralTotals(referrer: string): ReferralStats {
 }
 
 function persistLocalReferral(referrer: string, referred: string): ReferralStats {
-  if (!referrer || !referred || referrer === referred) return calculateReferralTotals(referrer);
+  if (!isValidPublicKeyString(referrer) || !isValidPublicKeyString(referred) || referrer === referred)
+    return calculateReferralTotals(referrer);
   const store = readReferralStore();
-  const existing = Array.isArray(store[referrer]) ? store[referrer].filter(Boolean) : [];
+  const existing = Array.isArray(store[referrer])
+    ? store[referrer].filter((v): v is string => typeof v === "string" && v.length > 0)
+    : [];
   if (!existing.includes(referred)) existing.push(referred);
   store[referrer] = existing;
   writeReferralStore(store);
@@ -675,18 +696,19 @@ function persistLocalReferral(referrer: string, referred: string): ReferralStats
 }
 
 async function fetchReferralStats(referrer: string): Promise<ReferralStats | null> {
-  if (!referrer) return null;
+  if (!isValidPublicKeyString(referrer)) return null;
   const data = await fetchJson<Partial<ReferralStats>>(`/referrals?wallet=${encodeURIComponent(referrer)}`);
   if (data) return normalizeReferralStats(data);
   return null;
 }
 
-async function recordRemoteReferral(referrer: string, referred: string) {
-  if (!referrer || !referred) return;
-  await fetchJson("/referrals", {
+async function recordRemoteReferral(referrer: string, referred: string): Promise<boolean> {
+  if (!isValidPublicKeyString(referrer) || !isValidPublicKeyString(referred)) return false;
+  const res = await fetchJson<unknown>("/referrals", {
     method: "POST",
     body: JSON.stringify({ referrer, referred }),
   });
+  return res !== null;
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -1474,7 +1496,7 @@ export default function BagTracker() {
   const [tipped, setTipped] = useState<Record<string, boolean>>({});
   const [refCopied, setRefCopied] = useState(false);
   const [pendingRef, setPendingRef] = useState<string | null>(null);
-  const [refEarnings, setRefEarnings] = useState<ReferralStats>(EMPTY_REFERRAL);
+  const [refEarnings, setRefEarnings] = useState<ReferralStats>(EMPTY_REFERRAL_STATS);
   const [wagerForm, setWagerForm] = useState<WagerForm>({ type: "followers", amount: 5, target: 1000 });
   const [lbFilter, setLbFilter] = useState<"all" | Tier>("all");
   const [solPrice, setSolPrice] = useState(SOL_PRICE_USD);
@@ -1508,9 +1530,11 @@ export default function BagTracker() {
     const storedRef = localStorage.getItem(PENDING_REF_KEY);
     const urlRef = new URLSearchParams(window.location.search).get("ref");
     const ref = urlRef || storedRef;
-    if (ref) {
+    if (ref && isValidPublicKeyString(ref)) {
       setPendingRef(ref);
       localStorage.setItem(PENDING_REF_KEY, ref);
+    } else if (storedRef) {
+      localStorage.removeItem(PENDING_REF_KEY);
     }
   }, []);
 
@@ -1579,7 +1603,7 @@ export default function BagTracker() {
   const syncReferralStats = useCallback(
     async (referrer: string) => {
       if (!referrer) {
-        setRefEarnings(EMPTY_REFERRAL);
+        setRefEarnings(EMPTY_REFERRAL_STATS);
         return;
       }
       const remote = await fetchReferralStats(referrer);
@@ -1643,11 +1667,12 @@ export default function BagTracker() {
   }, []);
 
   useEffect(() => {
-    if (!wallet?.publicKey) {
-      setRefEarnings(EMPTY_REFERRAL);
+    const walletPk = wallet?.publicKey ? wallet.publicKey.toString() : "";
+    if (!walletPk) {
+      setRefEarnings(EMPTY_REFERRAL_STATS);
       return;
     }
-    syncReferralStats(wallet.publicKey);
+    syncReferralStats(walletPk);
   }, [wallet?.publicKey, syncReferralStats]);
 
   // Connect wallet
@@ -1689,26 +1714,32 @@ export default function BagTracker() {
 
   useEffect(() => {
     if (!wallet?.publicKey || !pendingRef) return;
-    if (pendingRef === wallet.publicKey) {
+    if (!isValidPublicKeyString(pendingRef)) {
+      setPendingRef(null);
+      if (typeof window !== "undefined") localStorage.removeItem(PENDING_REF_KEY);
+      return;
+    }
+    const walletPk = wallet.publicKey.toString();
+    if (pendingRef === walletPk) {
       setPendingRef(null);
       if (typeof window !== "undefined") localStorage.removeItem(PENDING_REF_KEY);
       return;
     }
     const referrer = pendingRef;
-    const referred = wallet.publicKey;
+    const referred = walletPk;
     const applyReferral = async () => {
-      const updated = persistLocalReferral(referrer, referred);
-      if (referrer === wallet.publicKey) setRefEarnings(updated);
+      persistLocalReferral(referrer, referred);
       try {
-        await recordRemoteReferral(referrer, referred);
+        const recorded = await recordRemoteReferral(referrer, referred);
+        if (recorded) setToast({ msg: "Referral recorded — thanks for using a friend's link!", type: "success" });
       } catch {
         /* noop */
+      } finally {
+        setPendingRef(null);
+        if (typeof window !== "undefined") localStorage.removeItem(PENDING_REF_KEY);
       }
     };
-    applyReferral();
-    setToast({ msg: "Referral recorded — thanks for using a friend's link!", type: "success" });
-    setPendingRef(null);
-    if (typeof window !== "undefined") localStorage.removeItem(PENDING_REF_KEY);
+    applyReferral().catch(() => {});
   }, [wallet?.publicKey, pendingRef]);
 
   // Refresh wallet data
@@ -1857,7 +1888,8 @@ export default function BagTracker() {
     }
     const base =
       (typeof window !== "undefined" && window.location?.origin) || "https://bagstracker-seven.vercel.app";
-    const link = `${base}?ref=${encodeURIComponent(wallet.publicKey)}`;
+    const pk = wallet.publicKey.toString();
+    const link = `${base}?ref=${encodeURIComponent(pk)}`;
     navigator.clipboard?.writeText(link).catch(() => {});
     setRefCopied(true);
     setTimeout(() => setRefCopied(false), 2500);
