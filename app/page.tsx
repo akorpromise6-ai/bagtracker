@@ -682,17 +682,18 @@ function calculateReferralTotals(referrer: string): ReferralStats {
   };
 }
 
-function persistLocalReferral(referrer: string, referred: string): ReferralStats {
+function persistLocalReferral(referrer: string, referred: string): { stats: ReferralStats; added: boolean } {
   if (!isValidPublicKeyString(referrer) || !isValidPublicKeyString(referred) || referrer === referred)
-    return calculateReferralTotals(referrer);
+    return { stats: calculateReferralTotals(referrer), added: false };
   const store = readReferralStore();
   const existing = Array.isArray(store[referrer])
     ? store[referrer].filter((v): v is string => typeof v === "string" && v.length > 0)
     : [];
-  if (!existing.includes(referred)) existing.push(referred);
+  const hadReferral = existing.includes(referred);
+  if (!hadReferral) existing.push(referred);
   store[referrer] = existing;
   writeReferralStore(store);
-  return calculateReferralTotals(referrer);
+  return { stats: calculateReferralTotals(referrer), added: !hadReferral };
 }
 
 async function fetchReferralStats(referrer: string): Promise<ReferralStats | null> {
@@ -1496,7 +1497,7 @@ export default function BagTracker() {
   const [tipping, setTipping] = useState<string | null>(null);
   const [tipped, setTipped] = useState<Record<string, boolean>>({});
   const [refCopied, setRefCopied] = useState(false);
-  const [pendingReferrer, setPendingReferrer] = useState<string | null>(null);
+  const [pendingReferrerKey, setPendingReferrerKey] = useState<string | null>(null);
   const [refEarnings, setRefEarnings] = useState<ReferralStats>(EMPTY_REFERRAL_STATS);
   const [wagerForm, setWagerForm] = useState<WagerForm>({ type: "followers", amount: 5, target: 1000 });
   const [lbFilter, setLbFilter] = useState<"all" | Tier>("all");
@@ -1507,12 +1508,13 @@ export default function BagTracker() {
   const [bagsProfileLoading, setBagsProfileLoading] = useState(false);
 
   const readRefFromUrl = useCallback(() => {
+    // Prefer the current URL parameter over any cached referral to ensure the latest referrer is honored.
     if (typeof window === "undefined") return;
     const storedRef = localStorage.getItem(PENDING_REF_KEY);
     const urlRef = new URLSearchParams(window.location.search).get("ref");
     const ref = urlRef || storedRef;
     if (ref && isValidPublicKeyString(ref)) {
-      setPendingReferrer(ref);
+      setPendingReferrerKey(ref);
       localStorage.setItem(PENDING_REF_KEY, ref);
     } else if (storedRef) {
       localStorage.removeItem(PENDING_REF_KEY);
@@ -1721,38 +1723,38 @@ export default function BagTracker() {
   };
 
   useEffect(() => {
-    if (!wallet?.publicKey || !pendingReferrer) return;
+    if (!wallet?.publicKey || !pendingReferrerKey) return;
     const walletPk = wallet.publicKey.toString();
-    if (pendingReferrer === walletPk) {
-      setPendingReferrer(null);
+    if (pendingReferrerKey === walletPk) {
+      setPendingReferrerKey(null);
       if (typeof window !== "undefined") localStorage.removeItem(PENDING_REF_KEY);
       return;
     }
-    const referrer = pendingReferrer;
+    const referrer = pendingReferrerKey;
     const referred = walletPk;
-    const applyReferral = async () => {
+    const recordReferral = async () => {
       let recordedLocally = false;
       let recordedRemotely = false;
       try {
-        const localStats = persistLocalReferral(referrer, referred);
-        recordedLocally = localStats.refs >= 0;
+        const { stats: localStats, added } = persistLocalReferral(referrer, referred);
+        recordedLocally = added || localStats.refs > 0;
         recordedRemotely = await recordRemoteReferral(referrer, referred);
       } catch (err) {
         console.error("[bagtracker] referral capture failed", err);
       } finally {
         setToast(
           recordedRemotely
-            ? { msg: "Referral recorded — thanks for using a friend's link!", type: "success" }
+            ? { msg: "Referral recorded - thanks for using a friend's link!", type: "success" }
             : recordedLocally
-            ? { msg: "Referral captured locally — syncing may take a moment.", type: "warning" }
+            ? { msg: "Referral captured locally - syncing may take a moment.", type: "warning" }
             : { msg: "Unable to record referral. Please try again later.", type: "error" }
         );
-        setPendingReferrer(null);
+        setPendingReferrerKey(null);
         if (typeof window !== "undefined") localStorage.removeItem(PENDING_REF_KEY);
       }
     };
-    applyReferral();
-  }, [wallet?.publicKey, pendingReferrer]);
+    recordReferral();
+  }, [wallet?.publicKey, pendingReferrerKey]);
 
   // Refresh wallet data
   const refreshWallet = async () => {
