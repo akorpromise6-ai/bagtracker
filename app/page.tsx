@@ -79,6 +79,8 @@ type BagsProfile = {
   wagers?: Array<Partial<Wager>>;
   watching?: string[];
 };
+type ReferralStats = { refs: number; converted: number; sol: number };
+type ReferralStore = Record<string, string[]>;
 type ToastState = { msg: string; type: "success" | "error" | "warning" } | null;
 type ModalState =
   | { type: "noWallet" }
@@ -128,6 +130,9 @@ const BAGS_API = (process.env.NEXT_PUBLIC_BAGS_API || "https://api.bags.fm").rep
 const BAGS_API_KEY = process.env.NEXT_PUBLIC_BAGS_API_KEY;
 const TX_FETCH_LIMIT = 20;
 const TX_DISPLAY_LIMIT = 8;
+const REF_STORAGE_KEY = "bagtracker:referrals";
+const PENDING_REF_KEY = "bagtracker:pending-ref";
+const REF_EARNING_PER_REF = 0.05;
 
 // ─── DESIGN TOKENS ──────────────────────────────────────────────────────────
 const T = {
@@ -610,6 +615,78 @@ function normalizeLeaderboard(raw: unknown): LeaderboardEntry[] {
 async function fetchLeaderboard() {
   const data = (await fetchJson<unknown>("/leaderboard")) || (await fetchJson<unknown>("/leaderboards"));
   return normalizeLeaderboard(data || []);
+}
+
+// ─── REFERRAL STORAGE ───────────────────────────────────────────────────────
+const EMPTY_REFERRAL: ReferralStats = { refs: 0, converted: 0, sol: 0 };
+
+function normalizeReferralStats(raw?: Partial<ReferralStats> | null): ReferralStats {
+  return {
+    refs: Number(raw?.refs ?? raw?.converted ?? 0) || 0,
+    converted: Number(raw?.converted ?? raw?.refs ?? 0) || 0,
+    sol: Number(raw?.sol ?? 0) || 0,
+  };
+}
+
+function readReferralStore(): ReferralStore {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(REF_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    if (parsed && typeof parsed === "object") {
+      return Object.fromEntries(
+        Object.entries(parsed as ReferralStore).map(([k, v]) => [k, Array.isArray(v) ? v.filter(Boolean) : []])
+      );
+    }
+  } catch {
+    /* noop */
+  }
+  return {};
+}
+
+function writeReferralStore(store: ReferralStore) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(REF_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    /* noop */
+  }
+}
+
+function calculateReferralTotals(referrer: string): ReferralStats {
+  const store = readReferralStore();
+  const refs = Array.isArray(store[referrer]) ? Array.from(new Set(store[referrer].filter(Boolean))) : [];
+  const converted = refs.length;
+  return {
+    refs: converted,
+    converted,
+    sol: Number((converted * REF_EARNING_PER_REF).toFixed(3)),
+  };
+}
+
+function persistLocalReferral(referrer: string, referred: string): ReferralStats {
+  if (!referrer || !referred || referrer === referred) return calculateReferralTotals(referrer);
+  const store = readReferralStore();
+  const existing = Array.isArray(store[referrer]) ? store[referrer].filter(Boolean) : [];
+  if (!existing.includes(referred)) existing.push(referred);
+  store[referrer] = existing;
+  writeReferralStore(store);
+  return calculateReferralTotals(referrer);
+}
+
+async function fetchReferralStats(referrer: string): Promise<ReferralStats | null> {
+  if (!referrer) return null;
+  const data = await fetchJson<Partial<ReferralStats>>(`/referrals?wallet=${encodeURIComponent(referrer)}`);
+  if (data) return normalizeReferralStats(data);
+  return null;
+}
+
+async function recordRemoteReferral(referrer: string, referred: string) {
+  if (!referrer || !referred) return;
+  await fetchJson("/referrals", {
+    method: "POST",
+    body: JSON.stringify({ referrer, referred }),
+  });
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -1396,7 +1473,8 @@ export default function BagTracker() {
   const [tipping, setTipping] = useState<string | null>(null);
   const [tipped, setTipped] = useState<Record<string, boolean>>({});
   const [refCopied, setRefCopied] = useState(false);
-  const [refEarnings] = useState({ refs: 7, converted: 3, sol: 0.35 });
+  const [pendingRef, setPendingRef] = useState<string | null>(null);
+  const [refEarnings, setRefEarnings] = useState<ReferralStats>(EMPTY_REFERRAL);
   const [wagerForm, setWagerForm] = useState<WagerForm>({ type: "followers", amount: 5, target: 1000 });
   const [lbFilter, setLbFilter] = useState<"all" | Tier>("all");
   const [solPrice, setSolPrice] = useState(SOL_PRICE_USD);
@@ -1422,6 +1500,18 @@ export default function BagTracker() {
     check();
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
+  }, []);
+
+  // Capture referral parameter from URL or previous session
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedRef = localStorage.getItem(PENDING_REF_KEY);
+    const urlRef = new URLSearchParams(window.location.search).get("ref");
+    const ref = urlRef || storedRef;
+    if (ref) {
+      setPendingRef(ref);
+      localStorage.setItem(PENDING_REF_KEY, ref);
+    }
   }, []);
 
   // Load fonts + global styles
@@ -1486,6 +1576,22 @@ export default function BagTracker() {
 
   const showToast = (msg: string, type: NonNullable<ToastState>["type"] = "success") => setToast({ msg, type });
 
+  const syncReferralStats = useCallback(
+    async (referrer: string) => {
+      if (!referrer) {
+        setRefEarnings(EMPTY_REFERRAL);
+        return;
+      }
+      const remote = await fetchReferralStats(referrer);
+      if (remote) {
+        setRefEarnings(remote);
+        return;
+      }
+      setRefEarnings(calculateReferralTotals(referrer));
+    },
+    []
+  );
+
   const applyBagsProfile = (profile: BagsProfile | null | undefined) => {
     if (!profile) return;
     const watchList = (profile as { watchings?: string[] }).watchings || profile.watching;
@@ -1536,6 +1642,14 @@ export default function BagTracker() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!wallet?.publicKey) {
+      setRefEarnings(EMPTY_REFERRAL);
+      return;
+    }
+    syncReferralStats(wallet.publicKey);
+  }, [wallet?.publicKey, syncReferralStats]);
+
   // Connect wallet
   const connect = useCallback(async () => {
     const p = window?.solana || window?.phantom?.solana;
@@ -1572,6 +1686,30 @@ export default function BagTracker() {
     setBagsError(null);
     showToast("Wallet disconnected");
   };
+
+  useEffect(() => {
+    if (!wallet?.publicKey || !pendingRef) return;
+    if (pendingRef === wallet.publicKey) {
+      setPendingRef(null);
+      if (typeof window !== "undefined") localStorage.removeItem(PENDING_REF_KEY);
+      return;
+    }
+    const referrer = pendingRef;
+    const referred = wallet.publicKey;
+    const applyReferral = async () => {
+      const updated = persistLocalReferral(referrer, referred);
+      if (referrer === wallet.publicKey) setRefEarnings(updated);
+      try {
+        await recordRemoteReferral(referrer, referred);
+      } catch {
+        /* noop */
+      }
+    };
+    applyReferral();
+    setToast({ msg: "Referral recorded — thanks for using a friend's link!", type: "success" });
+    setPendingRef(null);
+    if (typeof window !== "undefined") localStorage.removeItem(PENDING_REF_KEY);
+  }, [wallet?.publicKey, pendingRef]);
 
   // Refresh wallet data
   const refreshWallet = async () => {
@@ -1713,7 +1851,13 @@ export default function BagTracker() {
 
   // Copy ref
   const copyRef = () => {
-    const link = `https://bagstracker-seven.vercel.app?ref=${wallet?.publicKey?.slice(0, 8) || "demo"}`;
+    if (!wallet?.publicKey) {
+      showToast("Connect your wallet to get your referral link", "warning");
+      return;
+    }
+    const base =
+      (typeof window !== "undefined" && window.location?.origin) || "https://bagstracker-seven.vercel.app";
+    const link = `${base}?ref=${encodeURIComponent(wallet.publicKey)}`;
     navigator.clipboard?.writeText(link).catch(() => {});
     setRefCopied(true);
     setTimeout(() => setRefCopied(false), 2500);
