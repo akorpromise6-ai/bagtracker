@@ -146,6 +146,7 @@ const FONT_URL =
 const SOL_PRICE_USD = 178;
 const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY;
 const HELIUS_RPC_URL = HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` : null;
+const RPC_FALLBACK_URL = "https://rpc.ankr.com/solana";
 const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || HELIUS_RPC_URL || "https://api.mainnet-beta.solana.com";
 const BAGS_API = (process.env.NEXT_PUBLIC_BAGS_API || "https://api.bags.fm").replace(/\/$/, "");
 const BAGS_API_KEY = process.env.NEXT_PUBLIC_BAGS_API_KEY;
@@ -430,16 +431,24 @@ function Logo({ size = 32 }: { size?: number }) {
 
 // ─── SOLANA RPC ──────────────────────────────────────────────────────────────
 async function rpc(method: string, params: unknown[]) {
-  try {
-    const r = await fetch(RPC_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    });
-    return (await r.json()).result;
-  } catch {
-    return null;
-  }
+  const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method, params });
+  const call = async (url: string | null) => {
+    if (!url) return null;
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      if (!r.ok) return null;
+      return (await r.json()).result;
+    } catch {
+      return null;
+    }
+  };
+
+  // Try preferred RPC, then fall back to a CORS-friendly public endpoint to avoid blank balances/txs.
+  return (await call(RPC_URL)) ?? (await call(RPC_FALLBACK_URL));
 }
 
 async function getSolBalance(pk: string) {
@@ -801,10 +810,10 @@ function formatCheckInCountdown(last: number | null) {
   if (remaining <= 0) return "Ready to check in";
   const hours = Math.floor(remaining / 3600000);
   const minutes = Math.floor((remaining % 3600000) / 60000);
-  if (hours > 0) return `Next point in ${hours}h ${minutes.toString().padStart(2, "0")}m`;
-  if (minutes > 0) return `Next point in ${minutes}m`;
+  if (hours > 0) return `Next BagPoint in ${hours}h ${minutes.toString().padStart(2, "0")}m`;
+  if (minutes > 0) return `Next BagPoint in ${minutes}m`;
   const seconds = Math.floor((remaining % 60000) / 1000);
-  return `Next point in ${seconds}s`;
+  return `Next BagPoint in ${seconds}s`;
 }
 
 function calcDegenScore(sol: number, tokenCount: number, txCount: number) {
@@ -1632,7 +1641,7 @@ export default function BagTracker() {
       : ((stats?.followers || 0) / goal.target) * 100;
   const SIDEBAR_W = sideOpen ? 236 : 68;
   const checkInFilled = Math.min(checkInPoints, CHECKIN_DISPLAY_MAX);
-  const checkInSubtitle = checkedIn ? formatCheckInCountdown(lastCheckIn) : "Earn 1 point every 24h";
+  const checkInSubtitle = checkedIn ? formatCheckInCountdown(lastCheckIn) : "Earn 1 BagPoint every 24h";
   const extraCheckIns = Math.max(0, checkInPoints - CHECKIN_DISPLAY_MAX);
   const { txsForDisplay, txsLabel, hasSolChanges } = useMemo(() => {
     const txsWithChange = txs.filter(hasNonZeroSolChange);
@@ -2023,7 +2032,7 @@ export default function BagTracker() {
     } catch {
       /* ignore storage errors */
     }
-    showToast(`+1 point added. Total: ${nextPoints}`);
+    showToast(`+1 BagPoint added. Total: ${nextPoints}`);
   };
 
   // Place wager
@@ -2310,7 +2319,7 @@ export default function BagTracker() {
           <Card>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
               <Ico n="flame" s={16} c={T.green} />
-              <span style={{ fontWeight: 700, fontSize: 14, color: T.text }}>Daily Check-ins</span>
+              <span style={{ fontWeight: 700, fontSize: 14, color: T.text }}>Daily BagPoints</span>
               {checkedIn && (
                 <span
                   style={{
@@ -2340,7 +2349,7 @@ export default function BagTracker() {
                     fontFamily: T.mono,
                   }}
                 >
-                  {checkInPoints} pts
+                  {checkInPoints} BagPoints
                 </span>
               )}
             </div>
@@ -2360,11 +2369,11 @@ export default function BagTracker() {
             </div>
             {extraCheckIns > 0 && (
               <div style={{ fontSize: 11, color: T.textMute, marginTop: -4, marginBottom: 8 }}>
-                +{extraCheckIns} additional points not shown
+                 +{extraCheckIns} additional BagPoints not shown
               </div>
             )}
             <div style={{ fontSize: 12, color: T.textSec, marginBottom: 14, fontFamily: T.sans }}>
-              {checkInPoints} points · {checkInSubtitle}
+              {checkInPoints} BagPoints · {checkInSubtitle}
             </div>
             <Btn
               fullWidth
@@ -2373,7 +2382,7 @@ export default function BagTracker() {
               icon={checkedIn ? "check" : "flame"}
               onClick={doCheckIn}
             >
-              {checkedIn ? "Checked in today" : "Add today's point"}
+               {checkedIn ? "Checked in today" : "Add today's BagPoint"}
             </Btn>
           </Card>
 
