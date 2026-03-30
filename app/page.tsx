@@ -1741,6 +1741,8 @@ export default function BagTracker() {
   const [goal, setGoal] = useState<Goal>({ type: "portfolio", target: 10000, label: "$10k" });
   const [wagers, setWagers] = useState<Wager[]>([]);
   const [watching, setWatching] = useState<string[]>([]);
+  const [watchInput, setWatchInput] = useState("");
+  const [watchError, setWatchError] = useState<string | null>(null);
   const [tipping, setTipping] = useState<string | null>(null);
   const [tipped, setTipped] = useState<Record<string, boolean>>({});
   const [refCopied, setRefCopied] = useState(false);
@@ -2261,14 +2263,35 @@ export default function BagTracker() {
     showToast("Wager cancelled — SOL returned");
   };
 
+  const addWatchWallet = () => {
+    const value = watchInput.trim();
+    if (!value) {
+      setWatchError("Enter a wallet address to track");
+      return;
+    }
+    if (!isValidPublicKeyString(value)) {
+      setWatchError("Enter a valid Solana address");
+      return;
+    }
+    if (watching.includes(value)) {
+      setWatchError("Already tracking this wallet");
+      return;
+    }
+    toggleWatch(value);
+    setWatchInput("");
+    setWatchError(null);
+  };
+
   // Watch whale
   const toggleWatch = (name: string) => {
-    if (watching.includes(name)) {
-      setWatching((w) => w.filter((x) => x !== name));
-      showToast(`Removed ${name} from watch list`);
+    const id = name.trim();
+    if (!id) return;
+    if (watching.includes(id)) {
+      setWatching((w) => w.filter((x) => x !== id));
+      showToast(`Removed ${id} from watch list`);
     } else {
-      setWatching((w) => [...w, name]);
-      showToast(`Now watching ${name}`);
+      setWatching((w) => [...w, id]);
+      showToast(`Now watching ${id}`);
     }
   };
 
@@ -2785,59 +2808,83 @@ export default function BagTracker() {
             </div>
             <span style={{ fontSize: 11, color: T.textMute }}>{watching.length} tracked</span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10 }}>
-            {leaderboard.slice(0, 6).map((w) => (
-              <div
-                key={w.name}
-                style={{
-                  padding: "12px 12px",
-                  borderRadius: 12,
-                  border: `1px solid ${T.border}`,
-                  background: watching.includes(w.name) ? T.greenLight : T.surfaceAlt,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                }}
-              >
-                <div
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 12,
-                    background: T.sidebar,
-                    color: "white",
-                    display: "grid",
-                    placeItems: "center",
-                    fontWeight: 700,
-                    fontFamily: T.mono,
-                    fontSize: 12,
+          <div style={{ display: "grid", gap: 12 }}>
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+                gridTemplateColumns: isMobile ? "1fr" : "1fr auto",
+                alignItems: "end",
+              }}
+            >
+              <div style={{ width: "100%" }}>
+                <Label>Wallet to track</Label>
+                <input
+                  value={watchInput}
+                  onChange={(e) => {
+                    setWatchInput(e.target.value);
+                    if (watchError) setWatchError(null);
                   }}
-                >
-                  #{w.rank}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: T.text }}>{w.name}</div>
-                  <div style={{ fontSize: 11, color: T.textMute }}>{fmtSol(w.sol)} · {w.score} score</div>
-                </div>
-                <Btn
-                  size="sm"
-                  variant={watching.includes(w.name) ? "secondary" : "primary"}
-                  onClick={() => toggleWatch(w.name)}
-                >
-                  {watching.includes(w.name) ? "Unwatch" : "Watch"}
-                </Btn>
-                <Btn size="sm" variant="ghost" onClick={() => doTip(w.name)} disabled={!!tipped[w.name]}>
-                  {tipped[w.name] ? "Tipped" : "Tip"}
-                </Btn>
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") addWatchWallet();
+                  }}
+                  placeholder="Enter Solana wallet address"
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: `1px solid ${watchError ? T.redLight : T.border}`,
+                    fontFamily: T.mono,
+                    background: "white",
+                  }}
+                />
+                {watchError && <div style={{ color: T.red, fontSize: 12, marginTop: 6 }}>{watchError}</div>}
               </div>
-            ))}
-            {!leaderboardLoading && !leaderboard.length && (
-              <div style={{ color: T.textMute, fontSize: 13, padding: "4px 0" }}>
-                No whale data yet. Bags.fm leaderboard will appear once loaded.
+              <Btn
+                icon="plus"
+                onClick={addWatchWallet}
+                disabled={!watchInput.trim()}
+                fullWidth={isMobile}
+                style={{ height: 42 }}
+              >
+                Add wallet
+              </Btn>
+            </div>
+
+            {watching.length === 0 ? (
+              <div style={{ color: T.textMute, fontSize: 13 }}>
+                No tracked wallets yet. Add a wallet to start watching your favorite whales.
               </div>
-            )}
-            {leaderboardLoading && (
-              <div style={{ color: T.textMute, fontSize: 13, padding: "4px 0" }}>Loading whales from bags.fm…</div>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {watching.map((w) => (
+                  <div
+                    key={w}
+                    style={{
+                      padding: "12px 12px",
+                      borderRadius: 12,
+                      border: `1px solid ${T.border}`,
+                      background: T.surfaceAlt,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: T.text }}>{shrt(w)}</div>
+                      <div style={{ fontSize: 11, color: T.textMute, wordBreak: "break-all" }}>{w}</div>
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <Btn size="sm" variant="primary" onClick={() => doTip(w)} disabled={!isValidPublicKeyString(w) || !!tipped[w]}>
+                        {tipped[w] ? "Tipped" : "Tip"}
+                      </Btn>
+                      <Btn size="sm" variant="ghost" onClick={() => toggleWatch(w)}>
+                        Remove
+                      </Btn>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </Card>
