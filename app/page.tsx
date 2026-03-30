@@ -158,6 +158,11 @@ const RPC_CANDIDATES = [
   "https://api.mainnet-beta.solana.com",
   "https://rpc.ankr.com/solana",
 ] as const;
+const JUPITER_PRICE_BATCH_SIZE = 50;
+const JUPITER_PROGRAM_ID = "JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB";
+const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
+const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const JUPITER_PRICE_URL = "https://price.jup.ag/v6/price";
 const BAGS_API = (process.env.NEXT_PUBLIC_BAGS_API || "https://api.bags.fm").replace(/\/$/, "");
 const BAGS_API_KEY = process.env.NEXT_PUBLIC_BAGS_API_KEY;
 const TX_FETCH_LIMIT = 40;
@@ -458,6 +463,7 @@ async function rpc(method: string, params: unknown[]) {
   };
 
   for (const url of RPC_CANDIDATES) {
+    if (!url) continue;
     const res = await call(url);
     if (res !== null && res !== undefined) return res;
   }
@@ -561,17 +567,36 @@ async function fetchTransactionDetails(signatures: Array<{ signature: string }>)
         const logs = tx.meta?.logMessages || [];
         let type: string | null = "Transaction";
         let detail = "";
-        if (programIds.some((p) => p === "JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB")) {
+        if (programIds.some((p) => p === JUPITER_PROGRAM_ID)) {
           type = "Swap";
           detail = "via Jupiter";
-        } else if (programIds.some((p) => p === "11111111111111111111111111111111")) {
-          type = solChange != null && solChange > 0 ? "Received SOL" : "Sent SOL";
-          detail = solChange != null ? `${Math.abs(solChange).toFixed(4)} SOL` : "";
-        } else if (programIds.some((p) => p === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")) {
+        } else if (programIds.some((p) => p === SYSTEM_PROGRAM_ID)) {
+          if (solChange == null) {
+            type = "SOL Transfer";
+            detail = "System program";
+          } else if (solChange > 0) {
+            type = "Received SOL";
+            detail = `${Math.abs(solChange).toFixed(4)} SOL`;
+          } else if (solChange < 0) {
+            type = "Sent SOL";
+            detail = `${Math.abs(solChange).toFixed(4)} SOL`;
+          } else {
+            type = "SOL Transfer";
+            detail = "No balance change";
+          }
+        } else if (programIds.some((p) => p === TOKEN_PROGRAM_ID)) {
           type = "Token Transfer";
-        } else if (programIds.some((p) => typeof p === "string" && p.toLowerCase().includes("pump"))) {
+        } else if ((logs as unknown[]).some((m) => typeof m === "string" && m.toLowerCase().includes("pump.fun"))) {
           type = "Pump.fun";
-          detail = solChange != null && solChange < 0 ? "Buy" : "Sell";
+          if (solChange == null) {
+            detail = "Activity";
+          } else if (solChange < 0) {
+            detail = "Buy";
+          } else if (solChange > 0) {
+            detail = "Sell";
+          } else {
+            detail = "No SOL change";
+          }
         } else if (logs.some((m: string) => m?.includes?.("Raydium"))) {
           type = "Swap";
           detail = "via Raydium";
@@ -682,19 +707,18 @@ async function fetchTokenPrices(mints: string[]) {
   const unique = Array.from(new Set(mints.filter(Boolean)));
   if (!unique.length) return {};
   const result: Record<string, number> = {};
-  const chunkSize = 50;
-  for (let i = 0; i < unique.length; i += chunkSize) {
-    const chunk = unique.slice(i, i + chunkSize);
+  for (let i = 0; i < unique.length; i += JUPITER_PRICE_BATCH_SIZE) {
+    const chunk = unique.slice(i, i + JUPITER_PRICE_BATCH_SIZE);
     try {
-      const res = await fetch(`https://price.jup.ag/v6/price?ids=${encodeURIComponent(chunk.join(","))}`);
+      const res = await fetch(`${JUPITER_PRICE_URL}?ids=${encodeURIComponent(chunk.join(","))}`);
       const json = await res.json();
       const data = json?.data || {};
       Object.entries(data).forEach(([mint, info]) => {
         const price = Number((info as { price?: number })?.price);
         if (Number.isFinite(price)) result[mint] = price;
       });
-    } catch {
-      /* ignore chunk errors */
+    } catch (err) {
+      console.warn("[bagtracker] token price fetch failed", { chunk, err });
     }
   }
   return result;
@@ -1006,6 +1030,15 @@ const hasNonZeroSolChange = (tx: TransactionInfo) => {
 const clampCheckInPoints = (value: number | null) => {
   if (value == null || Number.isNaN(value)) return 0;
   return Math.min(CHECKIN_POINTS_MAX, Math.max(0, value));
+};
+
+const calcTokenUiAmount = (amountInfo?: TokenAmount | null) => {
+  if (!amountInfo) return 0;
+  if (typeof amountInfo.uiAmount === "number") return amountInfo.uiAmount;
+  const decimals = amountInfo.decimals ?? 0;
+  const raw = Number(amountInfo.amount || 0);
+  if (!Number.isFinite(raw)) return 0;
+  return raw / 10 ** decimals;
 };
 
 const readStoredNumber = (key: string): number | null => {
@@ -1769,8 +1802,7 @@ export default function BagTracker() {
         };
         const mint = info?.mint;
         const amountInfo = info?.tokenAmount;
-        const decimals = amountInfo?.decimals ?? 0;
-        const rawAmount = amountInfo?.uiAmount ?? (amountInfo?.amount ? Number(amountInfo.amount) / 10 ** decimals : 0);
+        const rawAmount = calcTokenUiAmount(amountInfo);
         if (!mint || !Number.isFinite(rawAmount) || rawAmount <= 0) return null;
         const price = tokenPrices[mint];
         const valueUsd = price ? rawAmount * price : null;
@@ -2653,10 +2685,20 @@ export default function BagTracker() {
                 >
                   <div>
                     <div style={{ fontWeight: 700, color: T.text }}>Mint: {shrt(t.mint)}</div>
-                    <div style={{ fontSize: 11, color: T.textMute }}>{t.mint}</div>
+                    <div style={{ fontSize: 12, color: T.textMute }} aria-label={`Token mint ${t.mint}`}>
+                      {t.mint}
+                    </div>
                   </div>
-                  <div style={{ fontWeight: 700, fontFamily: T.mono, color: T.text }}>{fmtN(t.amount, 4)} units</div>
-                  <div style={{ fontWeight: 700, fontFamily: T.mono, color: T.text }}>
+                  <div
+                    style={{ fontWeight: 700, fontFamily: T.mono, color: T.text }}
+                    aria-label="Token amount"
+                  >
+                    {fmtN(t.amount, 4)} units
+                  </div>
+                  <div
+                    style={{ fontWeight: 700, fontFamily: T.mono, color: T.text }}
+                    aria-label="USD value"
+                  >
                     {t.valueUsd != null ? fmt$(t.valueUsd, 2) : "—"}
                   </div>
                 </div>
