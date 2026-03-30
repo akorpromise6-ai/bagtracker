@@ -547,6 +547,11 @@ async function fetchHeliusTxs(pk: string) {
 }
 
 async function fetchTransactionDetails(signatures: Array<{ signature: string }>) {
+  const hasProgramId = (value: unknown): value is { programId: string } =>
+    typeof value === "object" &&
+    value !== null &&
+    "programId" in value &&
+    typeof (value as { programId?: unknown }).programId === "string";
   const results: TransactionInfo[] = [];
   const toFetch = signatures.slice(0, TX_DISPLAY_LIMIT);
   await Promise.allSettled(
@@ -562,8 +567,8 @@ async function fetchTransactionDetails(signatures: Array<{ signature: string }>)
         const postBalances = tx.meta?.postBalances || [];
         const solChange =
           preBalances[0] != null && postBalances[0] != null ? (postBalances[0] - preBalances[0]) / 1e9 : null;
-        const instructions = tx.transaction?.message?.instructions || [];
-        const programIds = instructions.map((i: { programId?: string }) => i?.programId || "");
+        const instructions: unknown[] = tx.transaction?.message?.instructions || [];
+        const programIds = instructions.map((i) => (hasProgramId(i) ? i.programId : ""));
         const logs = tx.meta?.logMessages || [];
         let type: string | null = "Transaction";
         let detail = "";
