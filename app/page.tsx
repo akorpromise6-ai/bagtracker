@@ -563,7 +563,7 @@ async function fetchTransactionDetails(signatures: Array<{ signature: string }>)
         const solChange =
           preBalances[0] != null && postBalances[0] != null ? (postBalances[0] - preBalances[0]) / 1e9 : null;
         const instructions = tx.transaction?.message?.instructions || [];
-        const programIds = instructions.map((i: { programId?: string }) => i?.programId || "");
+        const programIds: string[] = instructions.map((i: { programId?: string }) => i?.programId || "");
         const logs = tx.meta?.logMessages || [];
         let type: string | null = "Transaction";
         let detail = "";
