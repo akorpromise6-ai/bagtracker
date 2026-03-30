@@ -547,6 +547,11 @@ async function fetchHeliusTxs(pk: string) {
 }
 
 async function fetchTransactionDetails(signatures: Array<{ signature: string }>) {
+  const hasProgramId = (value: unknown): value is { programId: string } =>
+    typeof value === "object" &&
+    value !== null &&
+    "programId" in value &&
+    typeof (value as { programId?: unknown }).programId === "string";
   const results: TransactionInfo[] = [];
   const toFetch = signatures.slice(0, TX_DISPLAY_LIMIT);
   await Promise.allSettled(
