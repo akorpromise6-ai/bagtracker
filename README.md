@@ -24,6 +24,7 @@ Set the following variables for live on-chain data:
 
 - `NEXT_PUBLIC_HELIUS_API_KEY` — required to read transactions and run RPC calls (Helius)
 - `NEXT_PUBLIC_RPC_URL` — optional override for the Solana RPC endpoint (defaults to Helius when a key is present)
+- `NEXT_PUBLIC_HELIUS_RPC_URL` or `HELIUS_RPC_URL` — drop-in Helius RPC URL; app will automatically fall back to public RPCs
 - `NEXT_PUBLIC_BAGS_API` — optional override for the Bags API base URL
 - `NEXT_PUBLIC_BAGS_API_KEY` — Bags API bearer token for authenticated requests
 

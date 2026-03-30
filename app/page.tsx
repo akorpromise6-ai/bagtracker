@@ -145,9 +145,19 @@ const FONT_URL =
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 const SOL_PRICE_USD = 178;
 const HELIUS_API_KEY = process.env.NEXT_PUBLIC_HELIUS_API_KEY;
-const HELIUS_RPC_URL = HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` : null;
-const RPC_FALLBACK_URL = "https://rpc.ankr.com/solana";
-const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || HELIUS_RPC_URL || "https://api.mainnet-beta.solana.com";
+const HELIUS_RPC_ENV =
+  process.env.NEXT_PUBLIC_HELIUS_RPC_URL ||
+  // Allow private env name too (Vercel dashboard often uses HELIUS_RPC_URL)
+  process.env.HELIUS_RPC_URL ||
+  null;
+const HELIUS_RPC_URL =
+  HELIUS_RPC_ENV || (HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` : null);
+const RPC_CANDIDATES = [
+  process.env.NEXT_PUBLIC_RPC_URL || null,
+  HELIUS_RPC_URL,
+  "https://api.mainnet-beta.solana.com",
+  "https://rpc.ankr.com/solana",
+] as const;
 const BAGS_API = (process.env.NEXT_PUBLIC_BAGS_API || "https://api.bags.fm").replace(/\/$/, "");
 const BAGS_API_KEY = process.env.NEXT_PUBLIC_BAGS_API_KEY;
 const TX_FETCH_LIMIT = 40;
@@ -447,8 +457,11 @@ async function rpc(method: string, params: unknown[]) {
     }
   };
 
-  // Try preferred RPC, then fall back to a CORS-friendly public endpoint to avoid blank balances/txs.
-  return (await call(RPC_URL)) ?? (await call(RPC_FALLBACK_URL));
+  for (const url of RPC_CANDIDATES) {
+    const res = await call(url);
+    if (res !== null && res !== undefined) return res;
+  }
+  return null;
 }
 
 async function getSolBalance(pk: string) {
@@ -527,12 +540,77 @@ async function fetchHeliusTxs(pk: string) {
   }
 }
 
+async function fetchTransactionDetails(signatures: Array<{ signature: string }>) {
+  const results: TransactionInfo[] = [];
+  const toFetch = signatures.slice(0, TX_DISPLAY_LIMIT);
+  await Promise.allSettled(
+    toFetch.map(async (sig) => {
+      try {
+        const tx = await rpc("getTransaction", [
+          sig.signature,
+          { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 },
+        ]);
+        if (!tx) return;
+        const blockTime = typeof tx.blockTime === "number" ? tx.blockTime : null;
+        const preBalances = tx.meta?.preBalances || [];
+        const postBalances = tx.meta?.postBalances || [];
+        const solChange =
+          preBalances[0] != null && postBalances[0] != null ? (postBalances[0] - preBalances[0]) / 1e9 : null;
+        const instructions = tx.transaction?.message?.instructions || [];
+        const programIds = instructions.map((i: { programId?: string }) => i?.programId || "");
+        const logs = tx.meta?.logMessages || [];
+        let type: string | null = "Transaction";
+        let detail = "";
+        if (programIds.some((p) => p === "JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB")) {
+          type = "Swap";
+          detail = "via Jupiter";
+        } else if (programIds.some((p) => p === "11111111111111111111111111111111")) {
+          type = solChange != null && solChange > 0 ? "Received SOL" : "Sent SOL";
+          detail = solChange != null ? `${Math.abs(solChange).toFixed(4)} SOL` : "";
+        } else if (programIds.some((p) => p === "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")) {
+          type = "Token Transfer";
+        } else if (programIds.some((p) => typeof p === "string" && p.toLowerCase().includes("pump"))) {
+          type = "Pump.fun";
+          detail = solChange != null && solChange < 0 ? "Buy" : "Sell";
+        } else if (logs.some((m: string) => m?.includes?.("Raydium"))) {
+          type = "Swap";
+          detail = "via Raydium";
+        }
+
+        const descBase = type || "Transaction";
+        const description = detail ? `${descBase} — ${detail}` : descBase;
+
+        results.push({
+          signature: sig.signature,
+          slot: Number(tx.slot ?? 0) || 0,
+          blockTime,
+          timestamp: blockTime,
+          err: tx.meta?.err || null,
+          memo: null,
+          confirmationStatus: undefined,
+          description,
+          type,
+          source: null,
+          nativeTransfers: [],
+          tokenTransfers: [],
+          solChange,
+        });
+      } catch {
+        /* ignore individual tx failures */
+      }
+    })
+  );
+  return results.sort((a, b) => (b.blockTime || 0) - (a.blockTime || 0));
+}
+
 async function getRecentTxs(pk: string) {
   const helius = await fetchHeliusTxs(pk);
   if (helius?.length) return helius;
 
   const r = await rpc("getSignaturesForAddress", [pk, { limit: TX_FETCH_LIMIT }]);
   const rows = Array.isArray(r) ? r : [];
+  const detailed = await fetchTransactionDetails(rows);
+  if (detailed.length) return detailed;
   return rows.map((t) => normalizeTx(t, pk)).filter(Boolean) as TransactionInfo[];
 }
 
@@ -598,6 +676,28 @@ async function fetchSolUsdPrice() {
 
   console.warn("[bagtracker] Falling back to static SOL price");
   return SOL_PRICE_USD;
+}
+
+async function fetchTokenPrices(mints: string[]) {
+  const unique = Array.from(new Set(mints.filter(Boolean)));
+  if (!unique.length) return {};
+  const result: Record<string, number> = {};
+  const chunkSize = 50;
+  for (let i = 0; i < unique.length; i += chunkSize) {
+    const chunk = unique.slice(i, i + chunkSize);
+    try {
+      const res = await fetch(`https://price.jup.ag/v6/price?ids=${encodeURIComponent(chunk.join(","))}`);
+      const json = await res.json();
+      const data = json?.data || {};
+      Object.entries(data).forEach(([mint, info]) => {
+        const price = Number((info as { price?: number })?.price);
+        if (Number.isFinite(price)) result[mint] = price;
+      });
+    } catch {
+      /* ignore chunk errors */
+    }
+  }
+  return result;
 }
 
 async function fetchBagsProfile(pk: string) {
@@ -1583,6 +1683,7 @@ export default function BagTracker() {
   const [wallet, setWallet] = useState<WalletInfo | null>(null);
   const [sol, setSol] = useState(0);
   const [tokens, setTokens] = useState<TokenAccount[]>([]);
+  const [tokenPrices, setTokenPrices] = useState<Record<string, number>>({});
   const [txs, setTxs] = useState<TransactionInfo[]>([]);
   const [connecting, setConnecting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -1658,6 +1759,26 @@ export default function BagTracker() {
       hasSolChanges: hasChanges,
     };
   }, [txs]);
+
+  const tokenHoldings = useMemo(() => {
+    return tokens
+      .map((t) => {
+        const info = (t as TokenAccount).account?.data?.parsed?.info as {
+          mint?: string;
+          tokenAmount?: TokenAmount;
+        };
+        const mint = info?.mint;
+        const amountInfo = info?.tokenAmount;
+        const decimals = amountInfo?.decimals ?? 0;
+        const rawAmount = amountInfo?.uiAmount ?? (amountInfo?.amount ? Number(amountInfo.amount) / 10 ** decimals : 0);
+        if (!mint || !Number.isFinite(rawAmount) || rawAmount <= 0) return null;
+        const price = tokenPrices[mint];
+        const valueUsd = price ? rawAmount * price : null;
+        return { mint, amount: rawAmount, valueUsd };
+      })
+      .filter((t): t is { mint: string; amount: number; valueUsd: number | null } => Boolean(t))
+      .sort((a, b) => (b.valueUsd ?? 0) - (a.valueUsd ?? 0));
+  }, [tokens, tokenPrices]);
 
   const { solDailyDelta, solDailyPct, solDailyIsNew } = useMemo(() => {
     const cutoff = Date.now() - ONE_DAY_MS;
@@ -1756,6 +1877,30 @@ export default function BagTracker() {
       clearInterval(id);
     };
   }, []);
+
+  // Token prices (Jupiter -> per mint)
+  useEffect(() => {
+    let cancelled = false;
+    const mints = Array.from(
+      new Set(
+        tokens
+          .map((t) => (t as TokenAccount).account?.data?.parsed?.info?.mint)
+          .filter((m): m is string => Boolean(m))
+      )
+    );
+    if (!mints.length) {
+      setTokenPrices({});
+      return;
+    }
+    const load = async () => {
+      const prices = await fetchTokenPrices(mints);
+      if (!cancelled) setTokenPrices(prices);
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [tokens]);
 
   // Load leaderboard from bags.fm
   useEffect(() => {
@@ -2480,11 +2625,51 @@ export default function BagTracker() {
           </div>
         </Card>
 
-          <Card>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-              <Ico n="activity" s={16} c={T.green} />
-              <span style={{ fontWeight: 700, fontSize: 14, color: T.text }}>Recent On-Chain Activity</span>
-              <span style={{ marginLeft: "auto", fontSize: 10, fontFamily: T.mono, color: T.textMute }}>
+        <Card>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <Ico n="coins" s={16} c={T.green} />
+            <span style={{ fontWeight: 700, fontSize: 14, color: T.text }}>Token Holdings</span>
+            <span style={{ marginLeft: "auto", fontSize: 10, fontFamily: T.mono, color: T.textMute }}>
+              Live via Jupiter · {tokenHoldings.length} tokens
+            </span>
+          </div>
+          {tokenHoldings.length === 0 ? (
+            <div style={{ color: T.textMute, fontSize: 13 }}>No SPL token balances found for this wallet.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {tokenHoldings.slice(0, 10).map((t) => (
+                <div
+                  key={t.mint}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: isMobile ? "1fr" : "1.4fr auto auto",
+                    gap: 8,
+                    alignItems: "center",
+                    padding: "10px 12px",
+                    borderRadius: 12,
+                    border: `1px solid ${T.border}`,
+                    background: T.surfaceAlt,
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 700, color: T.text }}>Mint: {shrt(t.mint)}</div>
+                    <div style={{ fontSize: 11, color: T.textMute }}>{t.mint}</div>
+                  </div>
+                  <div style={{ fontWeight: 700, fontFamily: T.mono, color: T.text }}>{fmtN(t.amount, 4)} units</div>
+                  <div style={{ fontWeight: 700, fontFamily: T.mono, color: T.text }}>
+                    {t.valueUsd != null ? fmt$(t.valueUsd, 2) : "—"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        <Card>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <Ico n="activity" s={16} c={T.green} />
+            <span style={{ fontWeight: 700, fontSize: 14, color: T.text }}>Recent On-Chain Activity</span>
+            <span style={{ marginLeft: "auto", fontSize: 10, fontFamily: T.mono, color: T.textMute }}>
                 {HELIUS_API_KEY ? "via Helius RPC" : "via Solana RPC"} · {txsLabel}
               </span>
             </div>
