@@ -183,21 +183,21 @@ const LATEST_TX_MS = Date.UTC(2100, 0, 1);
 
 // ─── DESIGN TOKENS ──────────────────────────────────────────────────────────
 const T = {
-  bg: "#f5f2eb",
+  bg: "#f3f6f4",
   surface: "#ffffff",
-  surfaceAlt: "#f0ede6",
-  sidebar: "#0d1a0d",
-  sideHover: "#162916",
+  surfaceAlt: "#f7faf8",
+  sidebar: "#0b1510",
+  sideHover: "#122219",
   sideActive: "#16a34a",
-  border: "#e4dfd7",
-  borderMid: "#d0c9c0",
+  border: "#dce7e0",
+  borderMid: "#c2d4c8",
   green: "#16a34a",
   greenLight: "#dcfce7",
   greenMid: "#86efac",
   greenDark: "#14532d",
-  text: "#111a10",
-  textSec: "#52635a",
-  textMute: "#9aaa98",
+  text: "#101a14",
+  textSec: "#486057",
+  textMute: "#7b9088",
   red: "#dc2626",
   redLight: "#fee2e2",
   gold: "#b45309",
@@ -1220,11 +1220,11 @@ function Card({
       style={{
         background: T.surface,
         border: `1px solid ${accent ? T.green : T.border}`,
-        borderRadius: 16,
+        borderRadius: 18,
         padding: 22,
         boxShadow: glow
-          ? `0 0 24px rgba(22,163,74,0.15), 0 2px 8px rgba(0,0,0,0.04)`
-          : "0 1px 4px rgba(0,0,0,0.04)",
+          ? `0 18px 44px rgba(22,163,74,0.14), 0 4px 14px rgba(6,24,16,0.08)`
+          : "0 8px 30px rgba(6,24,16,0.06)",
         position: "relative",
         overflow: "hidden",
         ...style,
@@ -1307,7 +1307,15 @@ function StatBox({
   bg?: string;
 }) {
   return (
-    <div style={{ background: bg, border: `1px solid ${T.border}`, borderRadius: 14, padding: "16px 14px" }}>
+    <div
+      style={{
+        background: bg,
+        border: `1px solid ${T.border}`,
+        borderRadius: 16,
+        padding: "16px 14px",
+        boxShadow: "0 6px 18px rgba(6,24,16,0.04)",
+      }}
+    >
       {icon && (
         <div style={{ marginBottom: 10 }}>
           <Ico n={icon} s={18} c={T.green} />
@@ -1380,13 +1388,14 @@ function Btn({
         background: disabled || loading ? T.surfaceAlt : v.bg,
         color: disabled || loading ? T.textMute : v.color,
         border: `1px solid ${disabled || loading ? T.border : v.border}`,
-        borderRadius: 10,
+        borderRadius: 12,
         fontWeight: 700,
         fontSize: fs[size],
         cursor: disabled || loading ? "not-allowed" : "pointer",
         fontFamily: T.sans,
-        transition: "all .15s",
+        transition: "all .2s",
         width: fullWidth ? "100%" : "auto",
+        boxShadow: variant === "primary" && !disabled && !loading ? "0 10px 18px rgba(22,163,74,0.25)" : "none",
         ...style,
       }}
     >
@@ -1407,11 +1416,11 @@ function Background() {
       <div style={{ position: "absolute", inset: 0, background: T.bg }} />
       <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.55 }}>
         <defs>
-          <pattern id="diag" width="32" height="32" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <line x1="0" y1="0" x2="0" y2="32" stroke="#16a34a" strokeWidth="0.35" strokeOpacity="0.2" />
+          <pattern id="diag" width="36" height="36" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="36" stroke="#16a34a" strokeWidth="0.3" strokeOpacity="0.16" />
           </pattern>
-          <pattern id="dots" width="40" height="40" patternUnits="userSpaceOnUse">
-            <circle cx="20" cy="20" r="0.8" fill="#16a34a" fillOpacity="0.12" />
+          <pattern id="dots" width="44" height="44" patternUnits="userSpaceOnUse">
+            <circle cx="22" cy="22" r="0.9" fill="#16a34a" fillOpacity="0.1" />
           </pattern>
         </defs>
         <rect width="100%" height="100%" fill="url(#diag)" />
@@ -1425,7 +1434,7 @@ function Background() {
           width: 800,
           height: 800,
           borderRadius: "50%",
-          background: "radial-gradient(circle,rgba(22,163,74,0.07) 0%,transparent 65%)",
+          background: "radial-gradient(circle,rgba(22,163,74,0.11) 0%,transparent 68%)",
         }}
       />
       <div
@@ -1436,7 +1445,7 @@ function Background() {
           width: 600,
           height: 600,
           borderRadius: "50%",
-          background: "radial-gradient(circle,rgba(22,163,74,0.05) 0%,transparent 65%)",
+          background: "radial-gradient(circle,rgba(56,189,248,0.1) 0%,transparent 68%)",
         }}
       />
     </div>
@@ -3248,13 +3257,15 @@ export default function BagTracker() {
           style={{
             width: SIDEBAR_W,
             transition: "width .2s",
-            background: T.sidebar,
+            background: "linear-gradient(180deg,#0b1510 0%, #0d1f15 100%)",
             color: "white",
             minHeight: "100vh",
             position: "sticky",
             top: 0,
             padding: 16,
             display: isMobile && !mobileSide ? "none" : "block",
+            borderRight: "1px solid rgba(134,239,172,0.2)",
+            boxShadow: "inset -1px 0 0 rgba(255,255,255,0.03)",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
@@ -3286,6 +3297,7 @@ export default function BagTracker() {
                     border: "none",
                     cursor: "pointer",
                     transition: "background .15s",
+                    boxShadow: active ? "0 8px 18px rgba(22,163,74,0.35)" : "none",
                   }}
                 >
                   <Ico n={item.icon} s={16} c={active ? "white" : "rgba(255,255,255,0.78)"} />
@@ -3345,6 +3357,11 @@ export default function BagTracker() {
               justifyContent: "space-between",
               gap: 12,
               marginBottom: 18,
+              background: "rgba(255,255,255,0.8)",
+              border: `1px solid ${T.border}`,
+              borderRadius: 16,
+              padding: isMobile ? "12px" : "12px 14px",
+              backdropFilter: "blur(8px)",
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
