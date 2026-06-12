@@ -1,0 +1,14 @@
+[package]
+name = "indexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+serde.workspace = true
+shared-contracts = { path = "../shared-contracts" }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
