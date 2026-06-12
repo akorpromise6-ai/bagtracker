@@ -1,0 +1,13 @@
+[package]
+name = "flow-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono.workspace = true
+shared-contracts = { path = "../shared-contracts" }
+uuid.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true

@@ -1,46 +1,67 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# BagTracker
 
-## Getting Started
+BagTracker is evolving into a value-flow intelligence platform focused on one question:
 
-First, run the development server:
+**Where did the money go?**
+
+## MVP Scope (Milestone A)
+
+- Solana-only trace flow (initial chain adapter)
+- `POST /trace` API (prototype in Next.js route handler and Rust Axum service scaffold)
+- Recursive flow engine with branch, merge, hop-limit, and cycle protection
+- Initial exchange/bridge labeling (Binance, Bybit, OKX, Coinbase, Kraken, MEXC, Wormhole, LayerZero)
+- Minimal trace UI at `/trace`
+
+## Repository Structure
+
+- `app/` — Next.js frontend and app route handlers
+  - `app/trace/page.tsx` — MVP tracing UI
+  - `app/api/trace/route.ts` — MVP trace endpoint for local frontend integration
+- `lib/flow/` — shared TypeScript contracts + flow engine
+- `services/` — Rust microservice workspace
+  - `services/indexer` — Solana indexer scaffold
+  - `services/flow-engine` — recursive money flow engine crate
+  - `services/api` — Axum API scaffold (`/health`, `/trace`)
+  - `services/bot` — Telegram bot scaffold
+  - `services/shared-contracts` — shared Rust schema contracts
+
+## Frontend Setup
 
 ```bash
+npm ci
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000/trace`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Frontend Validation
 
-## Environment
+```bash
+npm run lint
+npm run build
+```
 
-Set the following variables for live on-chain data:
+## Rust Services Setup (Scaffold)
 
-- `NEXT_PUBLIC_HELIUS_API_KEY` — required to read transactions and run RPC calls (Helius)
-- `NEXT_PUBLIC_RPC_URL` — optional override for the Solana RPC endpoint (defaults to Helius when a key is present)
-- `NEXT_PUBLIC_HELIUS_RPC_URL` or `HELIUS_RPC_URL` — drop-in Helius RPC URL; app will automatically fall back to public RPCs
-- `NEXT_PUBLIC_BAGS_API` — optional override for the Bags API base URL
-- `NEXT_PUBLIC_BAGS_API_KEY` — Bags API bearer token for authenticated requests
+```bash
+cd services
+cargo check
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Environment Variables
 
-## Learn More
+Optional (for future live chain integration):
 
-To learn more about Next.js, take a look at the following resources:
+- `NEXT_PUBLIC_HELIUS_API_KEY`
+- `NEXT_PUBLIC_RPC_URL`
+- `NEXT_PUBLIC_HELIUS_RPC_URL`
+- `HELIUS_RPC_URL`
+- `NEXT_PUBLIC_BAGS_API`
+- `NEXT_PUBLIC_BAGS_API_KEY`
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Milestone Roadmap
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **A:** Indexer + `/trace` API + minimal graph UI
+- **B:** Entity recognition + compression + alerts
+- **C:** AI explanations + investigations + bot integration
+- **D:** Multi-chain adapters + hardening + scale optimization

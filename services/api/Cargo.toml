@@ -1,0 +1,16 @@
+[package]
+name = "api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+axum.workspace = true
+chrono.workspace = true
+flow-engine = { path = "../flow-engine" }
+serde.workspace = true
+shared-contracts = { path = "../shared-contracts" }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
